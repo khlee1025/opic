@@ -1,0 +1,41 @@
+{
+  "name": "opic-daily-coach",
+  "version": "1.0.0",
+  "private": true,
+  "engines": {
+    "node": ">=22.13.0"
+  },
+  "scripts": {
+    "dev": "vinext dev --host 127.0.0.1",
+    "build": "vinext build",
+    "start": "node local-launcher/server.mjs",
+    "start:frontend": "vinext start --host 127.0.0.1 --port 4272",
+    "test": "npm run test:unit && npm run build && node --test tests/rendered-html.test.mjs",
+    "test:unit": "node --experimental-strip-types --test tests/coach-contract.test.mjs tests/question-bank.test.ts tests/rules.test.ts",
+    "coach": "node local-launcher/server.mjs",
+    "benchmark:ai": "node scripts/benchmark-local-ai.mjs",
+    "lint": "eslint app local-launcher scripts tests eslint.config.mjs next.config.ts vite.config.ts"
+  },
+  "dependencies": {
+    "next": "16.2.6",
+    "react": "19.2.6",
+    "react-dom": "19.2.6"
+  },
+  "devDependencies": {
+    "@types/node": "22.19.19",
+    "@types/react": "19.2.14",
+    "@types/react-dom": "19.2.3",
+    "@vitejs/plugin-react": "6.0.2",
+    "@vitejs/plugin-rsc": "0.5.26",
+    "eslint": "9.39.4",
+    "eslint-config-next": "16.2.6",
+    "react-server-dom-webpack": "19.2.6",
+    "typescript": "5.9.3",
+    "vinext": "0.0.50",
+    "vite": "8.1.5"
+  },
+  "overrides": {
+    "postcss": "8.5.20"
+  },
+  "type": "module"
+}

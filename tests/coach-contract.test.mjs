@@ -1,0 +1,792 @@
+import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import http from "node:http";
+import test from "node:test";
+
+import { APP_VERSION as CLIENT_APP_VERSION } from "../app/lib/version.ts";
+import { APP_VERSION as SERVER_APP_VERSION } from "../local-launcher/version.mjs";
+
+import {
+  COACH_RESPONSE_SCHEMA,
+  FALLBACK_MODEL,
+  FINAL_ANSWER_RESPONSE_SCHEMA,
+  MAX_MODEL_TOTAL_TIMEOUT_MS,
+  OLLAMA_BASE_URL,
+  PRIMARY_MODEL,
+  applyLocalRules,
+  createCoachFeedback,
+  validateCoachRequest,
+} from "../local-launcher/coach.mjs";
+import {
+  LOCAL_HOST,
+  startCoachServer,
+} from "../local-launcher/server.mjs";
+
+const baseRequest = {
+  stage: "feedback",
+  targetLevel: "AL",
+  question: "Tell me about a memorable day with a friend.",
+  koreanPlan: {
+    answer: "오랜만에 친구를 만나서 기억에 남았다.",
+    reason: "둘 다 바빴기 때문이다.",
+    example: "카페에서 이야기했다.",
+    closing: "그래서 기분이 좋았다.",
+  },
+  englishDraft: "After a long time, I had a promise with my friend. We talked at a cafe.",
+};
+
+test("client, server, and package versions stay aligned", () => {
+  const packageJson = JSON.parse(readFileSync(
+    new URL("../package.json", import.meta.url),
+    "utf8",
+  ));
+  assert.equal(CLIENT_APP_VERSION, packageJson.version);
+  assert.equal(SERVER_APP_VERSION, packageJson.version);
+});
+
+function validModelFeedback(overrides = {}) {
+  return {
+    stage: "feedback",
+    diagnosisKo: "뜻은 전달되지만 한국어식 표현을 먼저 다듬어야 합니다.",
+    intentCoverage: { answer: true, reason: true, example: true, closing: true },
+    issues: [
+      {
+        priority: 1,
+        original: "After a long time",
+        corrected: "For the first time in a long time",
+        category: "naturalness",
+        explanationKo: "오랜만에는 이 표현이 자연스럽습니다.",
+      },
+      {
+        priority: 2,
+        original: "I had a promise with my friend",
+        corrected: "I had plans with my friend",
+        category: "naturalness",
+        explanationKo: "친구와 약속이 있었다는 뜻에는 have plans가 자연스럽습니다.",
+      },
+      {
+        priority: 3,
+        original: "talked at a cafe",
+        corrected: "caught up at a cafe",
+        category: "naturalness",
+        explanationKo: "밀린 이야기를 했다는 맥락이면 catch up이 자연스럽습니다.",
+      },
+      {
+        priority: 3,
+        original: "We talked",
+        corrected: "We had a conversation",
+        category: "naturalness",
+        explanationKo: "네 번째 항목은 서버가 제거해야 합니다.",
+      },
+    ],
+    rewriteTargets: ["오랜만에 표현 고치기", "약속 표현 고치기", "직접 다시 쓰기"],
+    correctedEnglish: null,
+    naturalEnglish: null,
+    modelAnswer: null,
+    stretchAnswer: null,
+    phraseUpgrades: [],
+    nextTaskKo: "세 가지만 반영해 다시 써 보세요.",
+    factsPreserved: true,
+    factAdditions: [],
+    ...overrides,
+  };
+}
+
+function ollamaEnvelope(feedback) {
+  return new Response(JSON.stringify({
+    message: { role: "assistant", content: JSON.stringify(feedback) },
+    done: true,
+  }), {
+    status: 200,
+    headers: { "content-type": "application/json" },
+  });
+}
+
+function validPostAnalysis(overrides = {}) {
+  return validModelFeedback({
+    stage: "post_rewrite",
+    issues: [],
+    rewriteTargets: ["재작성한 답변의 흐름을 확인했습니다."],
+    correctedEnglish: null,
+    naturalEnglish: null,
+    modelAnswer: null,
+    stretchAnswer: null,
+    phraseUpgrades: [],
+    nextTaskKo: "교정 전후를 소리 내어 비교해 보세요.",
+    ...overrides,
+  });
+}
+
+function validFinalAnswers(rewriteDraft, overrides = {}) {
+  return {
+    correctedEnglish: rewriteDraft,
+    naturalEnglish: `Actually, ${rewriteDraft}`,
+    modelAnswer: `Here is the main point. ${rewriteDraft}`,
+    stretchAnswer: `Looking at it more broadly, ${rewriteDraft}`,
+    ...overrides,
+  };
+}
+
+function isFinalAnswerPass(body) {
+  return body?.format?.required?.length === 4 &&
+    !Object.hasOwn(body.format.properties ?? {}, "stage");
+}
+
+function schemaKeys(value, keys = []) {
+  if (!value || typeof value !== "object") return keys;
+  for (const [key, nested] of Object.entries(value)) {
+    keys.push(key);
+    schemaKeys(nested, keys);
+  }
+  return keys;
+}
+
+test("Ollama response schema omits unsupported grammar constraints", () => {
+  for (const schema of [COACH_RESPONSE_SCHEMA, FINAL_ANSWER_RESPONSE_SCHEMA]) {
+    const keys = new Set(schemaKeys(schema));
+    for (const unsupported of [
+      "minimum",
+      "maximum",
+      "exclusiveMinimum",
+      "exclusiveMaximum",
+      "minLength",
+      "maxLength",
+      "minItems",
+      "maxItems",
+    ]) {
+      assert.equal(keys.has(unsupported), false, `${unsupported} must be normalized in code instead`);
+    }
+  }
+  assert.equal(MAX_MODEL_TOTAL_TIMEOUT_MS, 75_000);
+});
+
+test("local model request is fixed to loopback, disables thinking/streaming, and hides answers before rewrite", async () => {
+  const calls = [];
+  const feedback = await createCoachFeedback(baseRequest, {
+    fetchImpl: async (url, init) => {
+      calls.push({ url, body: JSON.parse(init.body) });
+      return ollamaEnvelope(validModelFeedback());
+    },
+  });
+
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].url, `${OLLAMA_BASE_URL}/api/chat`);
+  assert.equal(calls[0].body.model, PRIMARY_MODEL);
+  assert.equal(calls[0].body.think, false);
+  assert.equal(calls[0].body.stream, false);
+  assert.equal(calls[0].body.format.properties.stage.enum[0], "feedback");
+  assert.equal(calls[0].body.format.properties.correctedEnglish.type, "null");
+  assert.equal(calls[0].body.options.num_predict, 800);
+  assert.equal(feedback.source, "local-model");
+  assert.equal(feedback.modelUsed, PRIMARY_MODEL);
+  assert.equal(feedback.issues.length, 3);
+  assert.equal(feedback.correctedEnglish, null);
+  assert.equal(feedback.naturalEnglish, null);
+  assert.equal(feedback.modelAnswer, null);
+  assert.equal(feedback.stretchAnswer, null);
+  assert.deepEqual(feedback.phraseUpgrades, []);
+});
+
+test("post-rewrite uses analysis-only then closed-book answer generation", async () => {
+  const request = {
+    ...baseRequest,
+    stage: "post_rewrite",
+    rewriteDraft: "For the first time in a long time, I met my friend at a cafe.",
+  };
+  const calls = [];
+  const result = await createCoachFeedback(request, {
+    fetchImpl: async (_url, init) => {
+      const body = JSON.parse(init.body);
+      calls.push(body);
+      return ollamaEnvelope(isFinalAnswerPass(body)
+        ? validFinalAnswers(request.rewriteDraft)
+        : validPostAnalysis());
+    },
+  });
+
+  assert.equal(calls.length, 2);
+  const [analysisBody, finalBody] = calls;
+  assert.equal(analysisBody.format.properties.correctedEnglish.type, "null");
+  assert.equal(analysisBody.format.properties.stretchAnswer.type, "null");
+  assert.equal(analysisBody.options.num_predict, 800);
+  const analysisInput = JSON.parse(analysisBody.messages[1].content);
+  assert.equal(analysisInput.englishDraft, null);
+  assert.equal(analysisInput.rewriteDraft, request.rewriteDraft);
+
+  assert.deepEqual(finalBody.format, FINAL_ANSWER_RESPONSE_SCHEMA);
+  assert.equal(finalBody.options.temperature, 0);
+  assert.equal(finalBody.options.num_predict, 800);
+  const finalInput = JSON.parse(finalBody.messages[1].content);
+  assert.deepEqual(finalInput.source.allowedPropositions, [request.rewriteDraft]);
+  assert.deepEqual(finalInput.source.discoursePlan, request.koreanPlan);
+  assert.ok(finalInput.source.hardLocks.length >= 4);
+  assert.equal(Object.hasOwn(finalInput, "candidates"), false);
+  assert.equal(Object.hasOwn(finalInput.source, "englishDraft"), false);
+  assert.equal(result.source, "local-model");
+  assert.notEqual(result.correctedEnglish, result.naturalEnglish);
+  assert.notEqual(result.modelAnswer, result.stretchAnswer);
+});
+
+test("Korean coaching fields fall back safely when a model answers them in English", async () => {
+  const request = {
+    ...baseRequest,
+    stage: "post_rewrite",
+    rewriteDraft: "For the first time in a long time, I met my friend at a cafe.",
+  };
+  const result = await createCoachFeedback(request, {
+    fetchImpl: async (_url, init) => {
+      const body = JSON.parse(init.body);
+      return ollamaEnvelope(isFinalAnswerPass(body)
+        ? validFinalAnswers(request.rewriteDraft)
+        : validPostAnalysis({
+            diagnosisKo: "This field should have been Korean.",
+            issues: [{
+              priority: 1,
+              original: "met my friend",
+              corrected: "caught up with my friend",
+              category: "naturalness",
+              explanationKo: "This explanation should have been Korean.",
+            }],
+            rewriteTargets: ["Write this target in Korean."],
+            nextTaskKo: "This task should have been Korean.",
+          }));
+    },
+  });
+
+  assert.match(result.diagnosisKo, /[가-힣]/u);
+  assert.match(result.nextTaskKo, /[가-힣]/u);
+  assert.ok(result.rewriteTargets.every((target) => /[가-힣]/u.test(target)));
+  assert.deepEqual(result.issues, []);
+});
+
+test("feedback drops a correction that invents an unsupported brand", async () => {
+  const result = await createCoachFeedback(baseRequest, {
+    fetchImpl: async () => ollamaEnvelope(validModelFeedback({
+      issues: [{
+        priority: 1,
+        original: "We talked at a cafe",
+        corrected: "We talked at Starbucks",
+        category: "naturalness",
+        explanationKo: "브랜드를 임의로 더한 잘못된 제안입니다.",
+      }],
+    })),
+  });
+
+  assert.equal(result.source, "local-model");
+  assert.deepEqual(result.issues, []);
+});
+
+test("fallback keeps the primary contract error when the optional model is absent", async () => {
+  const result = await createCoachFeedback({
+    ...baseRequest,
+    stage: "post_rewrite",
+    rewriteDraft: "For the first time in a long time, I met my friend at a cafe.",
+  }, {
+    fetchImpl: async (_url, init) => {
+      const body = JSON.parse(init.body);
+      const model = body.model;
+      if (model === FALLBACK_MODEL) return new Response("missing", { status: 404 });
+      return ollamaEnvelope(isFinalAnswerPass(body) ? {
+        correctedEnglish: "",
+        naturalEnglish: "",
+        modelAnswer: "",
+        stretchAnswer: "",
+      } : validPostAnalysis());
+    },
+  });
+
+  assert.equal(result.source, "rules-only");
+  assert.equal(result.fallbackReason, "model_contract_error");
+});
+
+test("falls back from qwen3.5:9b to qwen3.5:4b", async () => {
+  const models = [];
+  const result = await createCoachFeedback(baseRequest, {
+    fetchImpl: async (_url, init) => {
+      const body = JSON.parse(init.body);
+      models.push(body.model);
+      if (body.model === PRIMARY_MODEL) return new Response("missing", { status: 404 });
+      return ollamaEnvelope(validModelFeedback());
+    },
+  });
+
+  assert.deepEqual(models, [PRIMARY_MODEL, FALLBACK_MODEL]);
+  assert.equal(result.source, "local-model");
+  assert.equal(result.modelUsed, FALLBACK_MODEL);
+});
+
+test("rules-only mode remains usable and does not invent facts when both models are unavailable", async () => {
+  const unavailable = async () => {
+    throw new Error("offline");
+  };
+  const first = await createCoachFeedback({
+    ...baseRequest,
+    englishDraft: "I went to home. My condition was bad, so I ate medicine and took a rest.",
+  }, { fetchImpl: unavailable, timeoutMs: 20 });
+
+  assert.equal(first.source, "rules-only");
+  assert.equal(first.issues.length, 3);
+  assert.equal(first.correctedEnglish, null);
+  assert.equal(first.modelAnswer, null);
+  assert.equal(first.factsPreserved, true);
+  assert.equal(first.fallbackReason, "model_unreachable");
+
+  const post = await createCoachFeedback({
+    ...baseRequest,
+    stage: "post_rewrite",
+    englishDraft: "I went to home. My condition was bad.",
+    rewriteDraft: "I went to home because my condition was bad.",
+  }, { fetchImpl: unavailable, timeoutMs: 20 });
+
+  assert.equal(post.source, "rules-only");
+  assert.equal(post.correctedEnglish, "I went home because I wasn't feeling well.");
+  assert.equal(post.naturalEnglish, post.correctedEnglish);
+  assert.equal(post.modelAnswer, post.correctedEnglish);
+  assert.doesNotMatch(post.correctedEnglish, /Seoul|yesterday|2025/i);
+});
+
+test("a model timeout uses the shared budget, skips the second model, and exposes only a safe code", async () => {
+  let calls = 0;
+  const result = await createCoachFeedback(baseRequest, {
+    timeoutMs: 15,
+    fetchImpl: async (_url, init) => {
+      calls += 1;
+      return await new Promise((_resolve, reject) => {
+        init.signal.addEventListener("abort", () => {
+          reject(new DOMException("private answer must not escape", "AbortError"));
+        }, { once: true });
+      });
+    },
+  });
+
+  assert.equal(calls, 1);
+  assert.equal(result.source, "rules-only");
+  assert.equal(result.fallbackReason, "model_timeout");
+  assert.match(result.fallbackReason, /^[a-z_]+$/);
+  assert.doesNotMatch(JSON.stringify(result.fallbackReason), /private answer/i);
+});
+
+test("post-rewrite analysis and final generation share one deadline", async () => {
+  const request = {
+    ...baseRequest,
+    stage: "post_rewrite",
+    rewriteDraft: "For the first time in a long time, I met my friend at a cafe.",
+  };
+  let calls = 0;
+  const result = await createCoachFeedback(request, {
+    timeoutMs: 25,
+    fetchImpl: async (_url, init) => {
+      calls += 1;
+      const body = JSON.parse(init.body);
+      if (!isFinalAnswerPass(body)) {
+        await new Promise((resolve) => setTimeout(resolve, 8));
+        return ollamaEnvelope(validPostAnalysis());
+      }
+      return await new Promise((_resolve, reject) => {
+        init.signal.addEventListener("abort", () => {
+          reject(new DOMException("private rewrite", "AbortError"));
+        }, { once: true });
+      });
+    },
+  });
+
+  assert.equal(calls, 2);
+  assert.equal(result.source, "rules-only");
+  assert.equal(result.fallbackReason, "model_timeout");
+  assert.doesNotMatch(JSON.stringify(result), /private rewrite/i);
+});
+
+test("an external abort stops the current model request and never tries the fallback", async () => {
+  const controller = new AbortController();
+  let calls = 0;
+  let markStarted;
+  const started = new Promise((resolve) => {
+    markStarted = resolve;
+  });
+  const pending = createCoachFeedback(baseRequest, {
+    signal: controller.signal,
+    fetchImpl: async (_url, init) => {
+      calls += 1;
+      markStarted();
+      return await new Promise((_resolve, reject) => {
+        init.signal.addEventListener("abort", () => {
+          reject(new DOMException("aborted", "AbortError"));
+        }, { once: true });
+      });
+    },
+  });
+
+  await started;
+  controller.abort();
+  await assert.rejects(pending, (error) => error?.code === "REQUEST_ABORTED");
+  assert.equal(calls, 1);
+});
+
+test("rejects a model answer that adds unsupported numeric facts and uses the safer fallback", async () => {
+  const postRequest = {
+    ...baseRequest,
+    stage: "post_rewrite",
+    rewriteDraft: "For the first time in a long time, I met my friend at a cafe.",
+  };
+  const unsafe = validFinalAnswers(postRequest.rewriteDraft, {
+    naturalEnglish: `${postRequest.rewriteDraft} We talked for 3 hours.`,
+  });
+  const safe = validFinalAnswers(postRequest.rewriteDraft);
+  const models = [];
+
+  const result = await createCoachFeedback(postRequest, {
+    fetchImpl: async (_url, init) => {
+      const body = JSON.parse(init.body);
+      const model = body.model;
+      models.push(model);
+      return ollamaEnvelope(isFinalAnswerPass(body)
+        ? (model === PRIMARY_MODEL ? unsafe : safe)
+        : validPostAnalysis());
+    },
+  });
+
+  assert.deepEqual(models, [PRIMARY_MODEL, PRIMARY_MODEL, FALLBACK_MODEL, FALLBACK_MODEL]);
+  assert.equal(result.modelUsed, FALLBACK_MODEL);
+  assert.doesNotMatch(result.naturalEnglish, /3 hours/);
+});
+
+test("rejects newly invented proper place names without rejecting ordinary rewrites", async () => {
+  const postRequest = {
+    ...baseRequest,
+    stage: "post_rewrite",
+    rewriteDraft: "For the first time in a long time, I met my friend at a cafe.",
+  };
+  const unsafe = validFinalAnswers(postRequest.rewriteDraft, {
+    naturalEnglish: `${postRequest.rewriteDraft} Seoul was our next stop.`,
+  });
+  const safe = validFinalAnswers(postRequest.rewriteDraft, {
+    naturalEnglish: `${postRequest.rewriteDraft} We caught up and I felt happy.`,
+  });
+  const models = [];
+
+  const result = await createCoachFeedback(postRequest, {
+    fetchImpl: async (_url, init) => {
+      const body = JSON.parse(init.body);
+      const model = body.model;
+      models.push(model);
+      return ollamaEnvelope(isFinalAnswerPass(body)
+        ? (model === PRIMARY_MODEL ? unsafe : safe)
+        : validPostAnalysis());
+    },
+  });
+
+  assert.deepEqual(models, [PRIMARY_MODEL, PRIMARY_MODEL, FALLBACK_MODEL, FALLBACK_MODEL]);
+  assert.equal(result.modelUsed, FALLBACK_MODEL);
+  assert.doesNotMatch(result.naturalEnglish, /Seoul/);
+  assert.match(result.naturalEnglish, /We caught up/);
+});
+
+test("post-rewrite rejects changed frequency and inferred contact actions", async () => {
+  const request = {
+    ...baseRequest,
+    stage: "post_rewrite",
+    koreanPlan: {
+      answer: "밤에는 조용히 하고 이웃에게 인사하겠다.",
+      reason: "작은 소리도 스트레스를 줄 수 있기 때문이다.",
+      example: "한 번 밤늦게 음악을 틀었고 아래층에서 연락을 받아 볼륨을 낮췄다.",
+      closing: "이 규칙을 지키면 더 편안하다.",
+    },
+    englishDraft: "I played music late before and my neighbor contacted me.",
+    rewriteDraft: "I once played music late at night. My downstairs neighbor contacted me, so I turned the volume down.",
+  };
+  const unsafe = validFinalAnswers(request.rewriteDraft, {
+    naturalEnglish: "I used to play music late at night, and my downstairs neighbor told me to stop because they could not sleep.",
+  });
+  const safe = validFinalAnswers(request.rewriteDraft);
+  const calls = [];
+
+  const result = await createCoachFeedback(request, {
+    fetchImpl: async (_url, init) => {
+      const body = JSON.parse(init.body);
+      calls.push(body);
+      return ollamaEnvelope(isFinalAnswerPass(body)
+        ? (body.model === PRIMARY_MODEL ? unsafe : safe)
+        : validPostAnalysis());
+    },
+  });
+
+  assert.deepEqual(calls.map((body) => body.model), [
+    PRIMARY_MODEL,
+    PRIMARY_MODEL,
+    FALLBACK_MODEL,
+    FALLBACK_MODEL,
+  ]);
+  const primaryFinalInput = JSON.parse(calls[1].messages[1].content);
+  assert.match(primaryFinalInput.source.hardLocks.join("\n"), /one-time event/i);
+  assert.match(primaryFinalInput.source.hardLocks.join("\n"), /only says that someone contacted/i);
+  assert.equal(result.modelUsed, FALLBACK_MODEL);
+  assert.doesNotMatch(Object.values(result).join("\n"), /used to|told me to|sleep/i);
+  assert.match(result.naturalEnglish, /once/i);
+  assert.match(result.naturalEnglish, /contacted me/i);
+});
+
+test("post-rewrite repairs duplicate final answers with fact-neutral discourse markers", async () => {
+  const request = {
+    ...baseRequest,
+    stage: "post_rewrite",
+    rewriteDraft: "For the first time in a long time, I met my friend at a cafe.",
+  };
+  const duplicate = {
+    correctedEnglish: request.rewriteDraft,
+    naturalEnglish: request.rewriteDraft.toLowerCase(),
+    modelAnswer: `${request.rewriteDraft}!`,
+    stretchAnswer: `  ${request.rewriteDraft}  `,
+  };
+  const models = [];
+  const result = await createCoachFeedback(request, {
+    fetchImpl: async (_url, init) => {
+      const body = JSON.parse(init.body);
+      models.push(body.model);
+      return ollamaEnvelope(isFinalAnswerPass(body)
+        ? duplicate
+        : validPostAnalysis());
+    },
+  });
+
+  assert.deepEqual(models, [PRIMARY_MODEL, PRIMARY_MODEL]);
+  assert.equal(result.modelUsed, PRIMARY_MODEL);
+  assert.equal(new Set([
+    result.correctedEnglish,
+    result.naturalEnglish,
+    result.modelAnswer,
+    result.stretchAnswer,
+  ].map((value) => value.toLowerCase().replace(/[^a-z0-9]/g, ""))).size, 4);
+});
+
+test("fact guard allows a supported place already named in the Korean plan", async () => {
+  const postRequest = {
+    ...baseRequest,
+    stage: "post_rewrite",
+    koreanPlan: {
+      ...baseRequest.koreanPlan,
+      example: "서울의 카페에서 이야기했다.",
+    },
+    englishDraft: "I met my friend.",
+    rewriteDraft: "I met my friend at a cafe.",
+  };
+  const answer = "I met my friend at a cafe in Seoul.";
+  const result = await createCoachFeedback(postRequest, {
+    fetchImpl: async (_url, init) => {
+      const body = JSON.parse(init.body);
+      return ollamaEnvelope(isFinalAnswerPass(body)
+        ? validFinalAnswers(answer)
+        : validPostAnalysis());
+    },
+  });
+
+  assert.equal(result.source, "local-model");
+  assert.equal(result.modelUsed, PRIMARY_MODEL);
+  assert.match(result.naturalEnglish, /Seoul/);
+});
+
+test("post-rewrite removes unsupported intensity without discarding useful local feedback", async () => {
+  const request = {
+    ...baseRequest,
+    stage: "post_rewrite",
+    koreanPlan: {
+      answer: "몸이 좋지 않아 약속을 취소했다.",
+      reason: "열이 나고 피곤했다.",
+      example: "약을 먹고 쉬었다.",
+      closing: "다음 날 나아졌다.",
+    },
+    englishDraft: "I was sick and canceled my plans.",
+    rewriteDraft: "I had a fever, so I canceled my plans and rested at home.",
+  };
+  const generated = "I had a high fever, so I canceled my plans and rested at home.";
+  const result = await createCoachFeedback(request, {
+    fetchImpl: async (_url, init) => {
+      const body = JSON.parse(init.body);
+      return ollamaEnvelope(isFinalAnswerPass(body)
+        ? validFinalAnswers(generated)
+        : validPostAnalysis({
+            phraseUpgrades: [{ from: "a fever", to: "a high fever", whyKo: "강조" }],
+          }));
+    },
+  });
+
+  assert.equal(result.source, "local-model");
+  assert.doesNotMatch(result.naturalEnglish, /high fever/i);
+  assert.match(result.naturalEnglish, /a fever/i);
+  assert.equal(result.phraseUpgrades[0].to, "a fever");
+});
+
+test("deterministic Korean-English interference rules cover the core regression phrases", () => {
+  assert.equal(applyLocalRules("I went to home."), "I went home.");
+  assert.equal(applyLocalRules("My condition was bad."), "I wasn't feeling well.");
+  assert.equal(applyLocalRules("I ate medicine and took a rest."), "I took some medicine and got some rest.");
+  assert.equal(applyLocalRules("I stayed at a pension."), "I stayed at a vacation rental.");
+  assert.equal(applyLocalRules("I am difficult to wake up."), "I have a hard time waking up.");
+  assert.equal(applyLocalRules("I recommend you to visit."), "I'd recommend visiting.");
+});
+
+test("pension and after-a-long-time rules require the same context as the app rules", () => {
+  assert.equal(
+    applyLocalRules("After a long time, the meeting ended."),
+    "After a long time, the meeting ended.",
+  );
+  assert.equal(
+    applyLocalRules("After a long time, I met my friend."),
+    "for the first time in a long time, I met my friend.",
+  );
+  assert.equal(
+    applyLocalRules("My company pension provides monthly income."),
+    "My company pension provides monthly income.",
+  );
+  assert.equal(
+    applyLocalRules("It was a pension.", {
+      answer: "여행 중 펜션에서 묵었다.",
+      reason: "",
+      example: "",
+      closing: "",
+    }),
+    "It was a vacation rental.",
+  );
+});
+
+test("request validation requires the Korean planning stage and a rewrite before final answers", () => {
+  assert.throws(
+    () => validateCoachRequest({ ...baseRequest, koreanPlan: {} }),
+    /한국어 답변 설계/,
+  );
+  assert.throws(
+    () => validateCoachRequest({ ...baseRequest, stage: "post_rewrite" }),
+    /rewriteDraft/,
+  );
+  assert.throws(
+    () => validateCoachRequest({
+      ...baseRequest,
+      stage: "post_rewrite",
+      englishDraft: "I met my friend at a cafe.",
+      rewriteDraft: "  i met my friend at a cafe!!!  ",
+    }),
+    (error) => error?.code === "REWRITE_UNCHANGED",
+  );
+});
+
+test("request validation caps aggregate prompt context before model invocation", () => {
+  assert.throws(
+    () => validateCoachRequest({
+      stage: "feedback",
+      targetLevel: "AL",
+      question: "Q".repeat(1_900),
+      koreanPlan: {
+        answer: "a".repeat(900),
+        reason: "b".repeat(900),
+        example: "c".repeat(900),
+        closing: "d".repeat(900),
+      },
+      englishDraft: "e".repeat(4_900),
+    }),
+    (error) => error?.code === "REQUEST_TOO_LARGE" && error?.statusCode === 413,
+  );
+});
+
+test("HTTP server binds to 127.0.0.1, stays useful without a model, and never logs answer text", async (t) => {
+  const logLines = [];
+  const fetchImpl = async (url) => {
+    if (url === `${OLLAMA_BASE_URL}/api/tags`) {
+      return new Response(JSON.stringify({ models: [] }), { status: 200 });
+    }
+    throw new Error("model offline");
+  };
+  const runtime = await startCoachServer({
+    port: 0,
+    spawnOllama: false,
+    spawnFrontend: false,
+    fetchImpl,
+    modelTimeoutMs: 20,
+    healthTimeoutMs: 20,
+    logger: { warn: (line) => logLines.push(line) },
+  });
+  t.after(() => runtime.close());
+
+  const address = runtime.server.address();
+  assert.equal(address.address, LOCAL_HOST);
+
+  const healthResponse = await fetch(`${runtime.url}/api/health`);
+  const health = await healthResponse.json();
+  assert.equal(health.ok, true);
+  assert.equal(health.version, SERVER_APP_VERSION);
+  assert.equal(health.privacy, "local-only");
+  assert.equal(health.mode, "rules-only");
+  assert.equal(health.ollama.endpoint, OLLAMA_BASE_URL);
+
+  const coachResponse = await fetch(`${runtime.url}/api/coach`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(baseRequest),
+  });
+  const coach = await coachResponse.json();
+  assert.equal(coachResponse.status, 200);
+  assert.equal(coach.ok, true);
+  assert.equal(coach.source, "rules-only");
+
+  const denied = await fetch(`${runtime.url}/api/health`, {
+    headers: { origin: "https://example.com" },
+  });
+  assert.equal(denied.status, 403);
+
+  const secret = "SUPER_SECRET_ANSWER";
+  const invalid = await fetch(`${runtime.url}/api/coach`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(secret),
+  });
+  assert.equal(invalid.status, 400);
+  assert.equal(logLines.length, 1);
+  assert.doesNotMatch(logLines.join("\n"), new RegExp(secret));
+});
+
+test("HTTP client disconnect aborts the in-flight local model request", async () => {
+  let markModelStarted;
+  let markModelAborted;
+  const modelStarted = new Promise((resolve) => {
+    markModelStarted = resolve;
+  });
+  const modelAborted = new Promise((resolve) => {
+    markModelAborted = resolve;
+  });
+  const fetchImpl = async (url, init = {}) => {
+    if (url === `${OLLAMA_BASE_URL}/api/tags`) {
+      return new Response(JSON.stringify({ models: [{ name: PRIMARY_MODEL }] }), { status: 200 });
+    }
+    markModelStarted();
+    return await new Promise((_resolve, reject) => {
+      init.signal.addEventListener("abort", () => {
+        markModelAborted();
+        reject(new DOMException("aborted", "AbortError"));
+      }, { once: true });
+    });
+  };
+  const runtime = await startCoachServer({
+    port: 0,
+    spawnFrontend: false,
+    spawnOllama: false,
+    fetchImpl,
+  });
+
+  try {
+    const clientRequest = http.request(`${runtime.url}/api/coach`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+    });
+    clientRequest.on("error", () => {});
+    clientRequest.end(JSON.stringify(baseRequest));
+    await modelStarted;
+    clientRequest.destroy();
+    await Promise.race([
+      modelAborted,
+      new Promise((_resolve, reject) => setTimeout(
+        () => reject(new Error("model request was not aborted")),
+        1_000,
+      )),
+    ]);
+  } finally {
+    await runtime.close();
+  }
+});
