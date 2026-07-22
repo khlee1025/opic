@@ -740,6 +740,17 @@ input:focus-visible {
   cursor: pointer;
 }
 
+.practice-nav-actions {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.previous-step-button {
+  color: var(--blue);
+}
+
 .save-chip {
   padding: 7px 10px;
   background: #eaf5f0;
@@ -821,6 +832,29 @@ input:focus-visible {
   color: var(--ink-soft);
   font-size: 14px;
   line-height: 1.7;
+}
+
+.question-reference {
+  margin-top: 20px;
+  padding: 17px 19px;
+  border: 1px solid #bfd5e8;
+  border-radius: 15px;
+  background: #f4f9fd;
+}
+
+.question-reference span {
+  color: var(--blue);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.05em;
+}
+
+.question-reference p {
+  margin: 7px 0 0;
+  color: var(--navy);
+  font-size: clamp(16px, 2vw, 19px);
+  font-weight: 650;
+  line-height: 1.55;
 }
 
 .icon-button {

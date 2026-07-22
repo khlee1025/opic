@@ -9,7 +9,7 @@
 export const QUESTION_BANK_SOURCE_LABEL =
   "공개된 OPIc 시험의 의사소통 기능과 일반적인 설문 주제를 참고해 새로 작성한 독창 문항입니다. 실제 기출문항을 복제하거나 유출한 자료가 아닙니다.";
 
-export const CURRICULUM_VERSION = "2026.07-natural-spoken-v3";
+export const CURRICULUM_VERSION = "2026.07-natural-spoken-v4";
 export const CURRICULUM_ANCHOR_DATE = "2026-01-01";
 
 export const QUESTION_CATEGORY_IDS = [
@@ -31,7 +31,7 @@ export const QUESTION_CATEGORY_IDS = [
 ] as const;
 
 export type QuestionCategoryId = (typeof QUESTION_CATEGORY_IDS)[number];
-export type CurriculumCycle = 1 | 2 | 3 | 4 | 5 | 6;
+export type CurriculumCycle = 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8;
 export type QuestionSlot = "familiar" | "challenge";
 export type QuestionDifficulty = 1 | 2 | 3;
 export type QuestionType =
@@ -424,7 +424,7 @@ export const QUESTION_CATEGORY_LABELS: Readonly<Record<QuestionCategoryId, strin
     ) as Record<QuestionCategoryId, string>,
   );
 
-const CYCLES: readonly CurriculumCycle[] = [1, 2, 3, 4, 5, 6];
+const CYCLES: readonly CurriculumCycle[] = [1, 2, 3, 4, 5, 6, 7, 8];
 
 function buildBlueprint(
   profile: CategoryProfile,
@@ -766,7 +766,7 @@ function buildBlueprint(
     ]);
   }
 
-  if (slot === "familiar") {
+  if (cycle === 6 && slot === "familiar") {
     return selectBlueprint("c6-familiar-cultural-explanation", {
       type: "description",
       difficulty: 2,
@@ -796,31 +796,151 @@ function buildBlueprint(
     ]);
   }
 
-  return selectBlueprint("c6-challenge-future", {
+  if (cycle === 6) {
+    return selectBlueprint("c6-challenge-future", {
+      type: "opinion",
+      difficulty: 3,
+      targetSeconds: 90,
+      functions: ["predict", "hypothesize", "generalize", "supportOpinion"],
+    }, [
+      {
+        promptEn: `How do you think ${profile.futureSubject} will change in the next five to ten years? What is one possible benefit, one concern, and one way people can prepare?`,
+        requiredMoves: ["Make one clear prediction", "Give one benefit", "Give one concern", "Suggest how people can prepare"],
+      },
+      {
+        promptEn: `Imagine a good future and a difficult future for ${profile.futureSubject}. What could cause each one? Which future do you think is more likely?`,
+        requiredMoves: ["Describe a good future", "Describe a difficult future", "Give a cause for each", "Choose the more likely one"],
+      },
+      {
+        promptEn: `What will have the biggest effect on ${profile.futureSubject} over the next ten years? What change do you expect, who may find it difficult, and what should organizations do?`,
+        requiredMoves: ["Choose the biggest influence", "Predict one clear change", "Say who may find it difficult", "Suggest what organizations should do"],
+      },
+      {
+        promptEn: `What changes in ${profile.futureSubject} may happen soon, and what changes may take longer? Explain why, and say what could help the slower changes happen.`,
+        requiredMoves: ["Predict one quick change", "Predict one slower change", "Explain why it may take longer", "Say what could help"],
+      },
+      {
+        promptEn: `Think of one change you can already see in ${profile.futureSubject}. If it continues, what will daily life be like in five to ten years? What problem might appear, and how should people prepare?`,
+        requiredMoves: ["Start with a change you see now", "Predict how daily life may change", "Mention one possible problem", "Suggest how people can prepare"],
+      },
+    ]);
+  }
+
+  if (cycle === 7 && slot === "familiar") {
+    return selectBlueprint("c7-familiar-recent-choice", {
+      type: "experience",
+      difficulty: 2,
+      targetSeconds: 75,
+      functions: ["narratePast", "explainCause", "addDetail"],
+    }, [
+      {
+        promptEn: `Tell me about a recent choice you made related to ${profile.topicEn}. What options did you consider? What did you choose, and how did it work out?`,
+        requiredMoves: ["Introduce the recent choice", "Describe the options", "Explain your decision", "Give the result"],
+      },
+      {
+        promptEn: `Describe a time when you changed your usual way of dealing with ${profile.topicEn}. Why did you make the change? What happened afterward?`,
+        requiredMoves: ["Describe your old approach", "Explain why you changed it", "Describe the new approach", "Give the result"],
+      },
+      {
+        promptEn: `Think of a small decision about ${profile.topicEn} that made your day easier. What was the situation? What did you decide, and why did it help?`,
+        requiredMoves: ["Set up the situation", "Name the small decision", "Explain what you did", "Show how it helped"],
+      },
+      {
+        promptEn: `Tell me about useful advice you received about ${profile.topicEn}. What was the advice? Did you follow it, and what was the result?`,
+        requiredMoves: ["Say who gave the advice", "Explain the advice", "Describe what you did", "Give the result"],
+      },
+      {
+        promptEn: `Describe a recent experience with ${profile.topicEn} that went better than expected. How did you prepare? What happened, and what did you learn?`,
+        requiredMoves: ["Describe your expectation", "Explain how you prepared", "Tell what happened", "Share what you learned"],
+      },
+    ]);
+  }
+
+  if (cycle === 7) {
+    return selectBlueprint("c7-challenge-roleplay-followup", {
+      type: "roleplay",
+      difficulty: 3,
+      targetSeconds: 90,
+      functions: ["askQuestions", "solveProblem", "offerAlternatives", "sequence"],
+    }, [
+      {
+        promptEn: `Call ${profile.roleplayTarget}. You want to ${profile.roleplayGoal}. Ask two or three questions. Then explain that ${profile.roleplayProblem}. Ask about your choices and select one.`,
+        requiredMoves: ["Explain why you are calling", "Ask two or three questions", "Describe the new problem", "Choose one available option"],
+      },
+      {
+        promptEn: `You are speaking with ${profile.roleplayTarget} because you need to ${profile.roleplayGoal}. Confirm the important details. Then explain that ${profile.roleplayProblem} and ask for another plan.`,
+        requiredMoves: ["State what you need", "Confirm the key details", "Explain the problem clearly", "Ask for another plan"],
+      },
+      {
+        promptEn: `Contact ${profile.roleplayTarget} to ${profile.roleplayGoal}. Ask about the time, rules, and anything you should prepare. Then explain that ${profile.roleplayProblem}. Suggest one solution and ask if it is possible.`,
+        requiredMoves: ["Ask about timing", "Ask about rules and preparation", "Explain what changed", "Suggest and confirm a solution"],
+      },
+      {
+        promptEn: `Talk to ${profile.roleplayTarget}. First, ask what you need to know to ${profile.roleplayGoal}. Next, explain that ${profile.roleplayProblem}. Offer two possible plans and ask which one works better.`,
+        requiredMoves: ["Ask for the information you need", "Introduce the problem", "Offer two possible plans", "Ask the person to choose"],
+      },
+      {
+        promptEn: `You need to ${profile.roleplayGoal}, so you call ${profile.roleplayTarget}. Ask several short questions. When you hear that ${profile.roleplayProblem}, react politely, suggest a backup plan, and confirm the next step.`,
+        requiredMoves: ["Open the call politely", "Ask several short questions", "React and suggest a backup", "Confirm the next step"],
+      },
+    ]);
+  }
+
+  if (slot === "familiar") {
+    return selectBlueprint("c8-familiar-personal-favorite", {
+      type: "description",
+      difficulty: 2,
+      targetSeconds: 75,
+      functions: ["describe", "addDetail", "supportOpinion"],
+    }, [
+      {
+        promptEn: `Choose one part of ${profile.topicEn} that you enjoy most. Describe it clearly. When do you enjoy it, and why does it matter to you?`,
+        requiredMoves: ["Choose one favorite part", "Describe it clearly", "Say when you enjoy it", "Explain why it matters"],
+      },
+      {
+        promptEn: `What is one thing about ${profile.topicEn} that fits your personality or daily life well? Describe it and give a recent example.`,
+        requiredMoves: ["Name the best-fitting feature", "Describe it in detail", "Connect it to your daily life", "Give a recent example"],
+      },
+      {
+        promptEn: `If a friend wanted to understand why you like ${profile.topicEn}, what would you show or explain first? Give two details and share your personal reason.`,
+        requiredMoves: ["Choose what to show first", "Give two concrete details", "Explain your personal reason", "Address your friend directly"],
+      },
+      {
+        promptEn: `Describe an ordinary moment when ${profile.topicEn} makes your day better. Where are you? What happens, and how does it affect your mood?`,
+        requiredMoves: ["Set the scene", "Describe what happens", "Add one sensory detail", "Explain the effect on your mood"],
+      },
+      {
+        promptEn: `What detail do you pay the most attention to in ${profile.topicEn}? Describe that detail, explain how you notice it, and say why it is important.`,
+        requiredMoves: ["Name the important detail", "Describe it precisely", "Explain how you notice it", "Say why it is important"],
+      },
+    ]);
+  }
+
+  return selectBlueprint("c8-challenge-practical-solution", {
     type: "opinion",
     difficulty: 3,
     targetSeconds: 90,
-    functions: ["predict", "hypothesize", "generalize", "supportOpinion"],
+    functions: ["stateOpinion", "explainCause", "solveProblem", "generalize"],
   }, [
     {
-      promptEn: `How do you think ${profile.futureSubject} will change in the next five to ten years? What is one possible benefit, one concern, and one way people can prepare?`,
-      requiredMoves: ["Make one clear prediction", "Give one benefit", "Give one concern", "Suggest how people can prepare"],
+      promptEn: `What is one change that would improve ${profile.topicEn} in Korea? What problem would it solve? Who might disagree, and how would you respond?`,
+      requiredMoves: ["Propose one clear change", "Explain the current problem", "Mention a different view", "Respond with a reason"],
     },
     {
-      promptEn: `Imagine a good future and a difficult future for ${profile.futureSubject}. What could cause each one? Which future do you think is more likely?`,
-      requiredMoves: ["Describe a good future", "Describe a difficult future", "Give a cause for each", "Choose the more likely one"],
+      promptEn: `If you could change one thing about ${profile.topicEn}, what would you change? Who would benefit most? What new difficulty could the change create?`,
+      requiredMoves: ["Choose one change", "Explain who would benefit", "Predict a new difficulty", "Give a balanced conclusion"],
     },
     {
-      promptEn: `What will have the biggest effect on ${profile.futureSubject} over the next ten years? What change do you expect, who may find it difficult, and what should organizations do?`,
-      requiredMoves: ["Choose the biggest influence", "Predict one clear change", "Say who may find it difficult", "Suggest what organizations should do"],
+      promptEn: `What is a common problem people face with ${profile.topicEn}? Why does it keep happening? Suggest a realistic solution and explain one possible downside.`,
+      requiredMoves: ["Identify a common problem", "Explain why it continues", "Suggest a realistic solution", "Acknowledge one downside"],
     },
     {
-      promptEn: `What changes in ${profile.futureSubject} may happen soon, and what changes may take longer? Explain why, and say what could help the slower changes happen.`,
-      requiredMoves: ["Predict one quick change", "Predict one slower change", "Explain why it may take longer", "Say what could help"],
+      promptEn: `Think of a change that sounds helpful for ${profile.topicEn} but may also cause a new problem. What is the benefit? What is the risk, and what would be a fair solution?`,
+      requiredMoves: ["Describe the helpful change", "Explain its benefit", "Identify the new risk", "Offer a fair solution"],
     },
     {
-      promptEn: `Think of one change you can already see in ${profile.futureSubject}. If it continues, what will daily life be like in five to ten years? What problem might appear, and how should people prepare?`,
-      requiredMoves: ["Start with a change you see now", "Predict how daily life may change", "Mention one possible problem", "Suggest how people can prepare"],
+      promptEn: `What should change first to make ${profile.topicEn} better in the next few years? Explain why it matters, one obstacle, and how people could deal with it.`,
+      requiredMoves: ["Choose the first priority", "Explain why it matters", "Name one obstacle", "Suggest how to handle it"],
     },
   ]);
 }
@@ -1133,7 +1253,7 @@ function getPair(category: QuestionCategoryId, cycle: CurriculumCycle) {
 }
 
 /**
- * Six 15-day rounds. Every category appears once per round, while the offset
+ * Eight 15-day rounds. Every category appears once per round, while the offset
  * prevents the boundary between rounds from repeating the same category.
  */
 const CYCLE_OFFSETS: Readonly<Record<CurriculumCycle, number>> = {
@@ -1143,6 +1263,8 @@ const CYCLE_OFFSETS: Readonly<Record<CurriculumCycle, number>> = {
   4: 12,
   5: 1,
   6: 5,
+  7: 9,
+  8: 13,
 };
 
 export const DAILY_QUESTION_SETS: readonly DailyQuestionSet[] = Object.freeze(
@@ -1204,7 +1326,7 @@ export function getSeoulDateKey(date: Date = new Date()): string {
   return `${values.year}-${values.month}-${values.day}`;
 }
 
-/** Study days are one-based and wrap only after all 90 original pairs. */
+/** Study days are one-based and wrap only after all 120 original pairs. */
 export function getDailySetByStudyDay(studyDay: number): DailyQuestionSet {
   if (!Number.isInteger(studyDay) || studyDay < 1) {
     throw new Error("studyDay must be a positive integer.");
@@ -1229,7 +1351,7 @@ function isCategoryId(value: string): value is QuestionCategoryId {
 
 /**
  * Returns the day's two-question lesson. If survey interests are supplied, the
- * selected topics rotate deterministically while the six functional cycles
+ * selected topics rotate deterministically while the eight functional cycles
  * advance after every full topic round.
  */
 export function getQuestionPairForDate(

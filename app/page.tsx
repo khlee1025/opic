@@ -19,6 +19,7 @@ import {
   type DailyQuestion,
 } from "./data/questions";
 import { APP_VERSION } from "./lib/version";
+import { getPreviousPracticeStage } from "./lib/practice";
 import { applyDeterministicRules, detectRuleIssues } from "./lib/rules";
 import {
   clearCoachState,
@@ -559,6 +560,10 @@ function KoreanPlanning({ question, plan, onChange, onNext }: { question: DailyQ
       <p className="eyebrow">STEP 1 · CONTENT FIRST</p>
       <h1 className="page-title">영어보다 먼저, 할 말을 만드세요.</h1>
       <p className="question-instruction">문장을 번역하기 위한 한국어가 아니라, 답변의 뼈대를 만드는 단계입니다. 짧게 적어도 괜찮습니다.</p>
+      <div className="question-reference" aria-label="연습 질문">
+        <span>연습 질문</span>
+        <p lang="en">{question.promptEn}</p>
+      </div>
       <div className="idea-grid">
         {fields.map(([key, label]) => <div className="field-card" key={key}><label htmlFor={`plan-${key}`}>{label}</label><span className="field-hint">{question.koreanIdeaPrompts[key]}</span><textarea id={`plan-${key}`} className="idea-textarea" value={plan[key]} onChange={(event) => onChange({ ...plan, [key]: event.target.value })} placeholder="한국어로 핵심만 적어보세요." /></div>)}
       </div>
@@ -738,6 +743,21 @@ function PracticeScreen({ question, attempt, onBack, updateAttempt, targetLevel,
   }, []);
 
   const patchAttempt = (patch: Partial<QuestionAttempt>) => updateAttempt({ ...attempt, ...patch, updatedAt: new Date().toISOString() });
+  const previousStage = getPreviousPracticeStage(attempt.stage);
+
+  const goBackOneStep = () => {
+    if (!previousStage) return;
+    feedbackRequestRef.current += 1;
+    window.speechSynthesis?.cancel();
+    setSpeakingQuestion(false);
+    setTimerRunning(false);
+    setAnswerHidden(false);
+    setSeconds(question.targetSeconds);
+    patchAttempt({
+      stage: previousStage,
+      ...(attempt.stage === "completed" ? { completedAt: undefined } : {}),
+    });
+  };
 
   const speakQuestion = () => {
     if (!("speechSynthesis" in window)) return;
@@ -791,7 +811,7 @@ function PracticeScreen({ question, attempt, onBack, updateAttempt, targetLevel,
 
   const saveLabel = saveStatus === "error" ? "저장 실패 · 백업 권장" : saveStatus === "saving" ? "이 PC에 저장 중…" : "✓ 이 PC에 저장됨";
 
-  return <div className="practice-shell"><div className="practice-top"><button type="button" className="back-button" onClick={onBack}><Icon name="back" size={17} /> 오늘 학습</button><span className={`save-chip ${saveStatus === "error" ? "error" : ""}`} aria-live="polite">{saveLabel}</span></div><Stepper stage={attempt.stage} />
+  return <div className="practice-shell"><div className="practice-top"><div className="practice-nav-actions"><button type="button" className="back-button" onClick={onBack}><Icon name="back" size={17} /> 오늘 학습</button>{previousStage && <button type="button" className="back-button previous-step-button" onClick={goBackOneStep}><Icon name="back" size={17} /> 이전 단계</button>}</div><span className={`save-chip ${saveStatus === "error" ? "error" : ""}`} aria-live="polite">{saveLabel}</span></div><Stepper stage={attempt.stage} />
     {attempt.stage === "not_started" && <QuestionIntro question={question} speaking={speakingQuestion} onSpeak={speakQuestion} onNext={() => patchAttempt({ stage: "question_seen" })} />}
     {attempt.stage === "question_seen" && <KoreanPlanning question={question} plan={attempt.koreanPlan} onChange={(koreanPlan) => patchAttempt({ koreanPlan })} onNext={() => patchAttempt({ stage: "korean_completed" })} />}
     {attempt.stage === "korean_completed" && <DraftWriting attempt={attempt} onDraft={(englishDraft) => patchAttempt({ englishDraft })} onSubmit={submitDraft} />}

@@ -19,12 +19,12 @@ const {
   getSeoulDateKey,
 } = (await import(questionBankSourcePath)) as typeof QuestionBankModule;
 
-test("contains 90 complete lessons and 180 unique original questions", () => {
+test("contains 120 complete lessons and 240 unique original questions", () => {
   assert.equal(QUESTION_CATEGORY_IDS.length, 15);
-  assert.equal(DAILY_QUESTION_SETS.length, 90);
-  assert.equal(QUESTION_BANK.length, 180);
-  assert.equal(new Set(QUESTION_BANK.map((question) => question.id)).size, 180);
-  assert.equal(new Set(QUESTION_BANK.map((question) => question.promptEn)).size, 180);
+  assert.equal(DAILY_QUESTION_SETS.length, 120);
+  assert.equal(QUESTION_BANK.length, 240);
+  assert.equal(new Set(QUESTION_BANK.map((question) => question.id)).size, 240);
+  assert.equal(new Set(QUESTION_BANK.map((question) => question.promptEn)).size, 240);
 
   for (const set of DAILY_QUESTION_SETS) {
     assert.equal(set.questions.length, 2);
@@ -50,9 +50,9 @@ test("spreads the curriculum across materially different prompt and planning fra
     );
   }
 
-  // Twelve functional lesson slots now have five substantive variants each.
-  assert.equal(framingCounts.size, 60);
-  assert.equal(planningCounts.size, 60);
+  // Sixteen functional lesson slots have five substantive variants each.
+  assert.equal(framingCounts.size, 80);
+  assert.equal(planningCounts.size, 80);
   assert.ok([...framingCounts.values()].every((count) => count === 3));
   assert.ok([...planningCounts.values()].every((count) => count === 3));
 
@@ -65,40 +65,40 @@ test("spreads the curriculum across materially different prompt and planning fra
     ),
   );
 
-  assert.equal(requiredMoveSets.size, 60);
+  assert.equal(requiredMoveSets.size, 80);
   assert.ok(scaffoldSets.size >= 150);
 
   for (const category of QUESTION_CATEGORY_IDS) {
     const categoryQuestions = QUESTION_BANK.filter(
       (question) => question.category === category,
     );
-    assert.equal(categoryQuestions.length, 12);
+    assert.equal(categoryQuestions.length, 16);
     assert.equal(
       new Set(categoryQuestions.map((question) => question.framingId)).size,
-      12,
+      16,
     );
     assert.equal(
       new Set(categoryQuestions.map((question) => question.planningPatternId))
         .size,
-      12,
+      16,
     );
   }
 });
 
-test("covers every category in all six progressive cycles", () => {
+test("covers every category in all eight progressive cycles", () => {
   for (const category of QUESTION_CATEGORY_IDS) {
     const lessons = DAILY_QUESTION_SETS.filter((set) => set.category === category);
-    assert.equal(lessons.length, 6);
+    assert.equal(lessons.length, 8);
     assert.deepEqual(
       lessons.map((set) => set.cycle).sort(),
-      [1, 2, 3, 4, 5, 6],
+      [1, 2, 3, 4, 5, 6, 7, 8],
     );
     assert.ok(QUESTION_CATEGORY_LABELS[category].length > 0);
   }
 
   assert.equal(
     QUESTION_BANK.filter((question) => question.type === "roleplay").length,
-    15,
+    30,
   );
   assert.ok(
     QUESTION_BANK.some(
@@ -127,10 +127,10 @@ test("includes Korean planning scaffolds and a copyright-safe source notice", ()
     );
     assert.match(question.promptEn, /[.?!]$/);
     assert.equal(question.ttsText, question.promptEn);
-    assert.match(question.framingId, /^c[1-6]-(?:familiar|challenge)-[a-z-]+-v[1-5]$/);
+    assert.match(question.framingId, /^c[1-8]-(?:familiar|challenge)-[a-z-]+-v[1-5]$/);
     assert.match(
       question.planningPatternId,
-      /^c[1-6]-(?:familiar|challenge)-[a-z-]+-plan-v[1-5]$/,
+      /^c[1-8]-(?:familiar|challenge)-[a-z-]+-plan-v[1-5]$/,
     );
     assert.ok(question.requiredMoves.length >= 3);
     assert.ok(question.functions.length >= 2);
@@ -172,19 +172,19 @@ test("keeps every spoken question clear and conversational", () => {
   );
 });
 
-test("maps 90 consecutive calendar days deterministically without repeating a lesson", () => {
+test("maps 120 consecutive calendar days deterministically without repeating a lesson", () => {
   assert.equal(getDailySetForDate(CURRICULUM_ANCHOR_DATE).sequence, 1);
   assert.equal(getDailySetForDate(CURRICULUM_ANCHOR_DATE).sequence, 1);
 
   const start = Date.UTC(2026, 0, 1);
-  const ids = Array.from({ length: 90 }, (_, index) => {
+  const ids = Array.from({ length: 120 }, (_, index) => {
     const key = new Date(start + index * 86_400_000).toISOString().slice(0, 10);
     return getDailySetForDate(key).id;
   });
 
-  assert.equal(new Set(ids).size, 90);
-  assert.equal(getDailySetForDate("2026-04-01").id, ids[0]);
-  assert.equal(getDailySetByStudyDay(91).id, getDailySetByStudyDay(1).id);
+  assert.equal(new Set(ids).size, 120);
+  assert.equal(getDailySetForDate("2026-05-01").id, ids[0]);
+  assert.equal(getDailySetByStudyDay(121).id, getDailySetByStudyDay(1).id);
 });
 
 test("rotates only among selected survey categories and remains stable", () => {
