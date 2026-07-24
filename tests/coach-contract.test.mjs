@@ -122,7 +122,7 @@ function validFinalAnswers(rewriteDraft, overrides = {}) {
     correctedEnglish: rewriteDraft,
     naturalEnglish: `Actually, ${rewriteDraft}`,
     modelAnswer: `Here is the main point. ${rewriteDraft}`,
-    stretchAnswer: `Looking at it more broadly, ${rewriteDraft}`,
+    stretchAnswer: `Because that experience matters, I can explain the point clearly. However, when I look back on it, the same conclusion stands. Overall, ${rewriteDraft}`,
     ...overrides,
   };
 }
@@ -276,7 +276,8 @@ test("feedback drops a correction that invents an unsupported brand", async () =
   assert.deepEqual(result.issues, []);
 });
 
-test("fallback keeps the primary contract error when the optional model is absent", async () => {
+test("keeps valid analysis and hides final cards after one empty-answer retry", async () => {
+  const calls = [];
   const result = await createCoachFeedback({
     ...baseRequest,
     stage: "post_rewrite",
@@ -284,6 +285,7 @@ test("fallback keeps the primary contract error when the optional model is absen
   }, {
     fetchImpl: async (_url, init) => {
       const body = JSON.parse(init.body);
+      calls.push(body);
       const model = body.model;
       if (model === FALLBACK_MODEL) return new Response("missing", { status: 404 });
       return ollamaEnvelope(isFinalAnswerPass(body) ? {
@@ -295,8 +297,19 @@ test("fallback keeps the primary contract error when the optional model is absen
     },
   });
 
-  assert.equal(result.source, "rules-only");
-  assert.equal(result.fallbackReason, "model_contract_error");
+  assert.deepEqual(calls.map((body) => body.model), [
+    PRIMARY_MODEL,
+    PRIMARY_MODEL,
+    PRIMARY_MODEL,
+  ]);
+  assert.equal(result.source, "local-model");
+  assert.equal(result.fallbackReason, null);
+  assert.ok([
+    result.correctedEnglish,
+    result.naturalEnglish,
+    result.modelAnswer,
+    result.stretchAnswer,
+  ].every((value) => value === null));
 });
 
 test("falls back from qwen3.5:9b to qwen3.5:4b", async () => {
@@ -511,7 +524,7 @@ test("post-rewrite rejects changed frequency and inferred contact actions", asyn
   assert.match(result.correctedEnglish, /contacted me/i);
 });
 
-test("post-rewrite repairs duplicate final answers with fact-neutral discourse markers", async () => {
+test("post-rewrite retries duplicate final answers instead of disguising them with prefixes", async () => {
   const request = {
     ...baseRequest,
     stage: "post_rewrite",
@@ -523,18 +536,21 @@ test("post-rewrite repairs duplicate final answers with fact-neutral discourse m
     modelAnswer: `${request.rewriteDraft}!`,
     stretchAnswer: `  ${request.rewriteDraft}  `,
   };
-  const models = [];
+  const calls = [];
   const result = await createCoachFeedback(request, {
     fetchImpl: async (_url, init) => {
       const body = JSON.parse(init.body);
-      models.push(body.model);
-      return ollamaEnvelope(isFinalAnswerPass(body)
+      calls.push(body);
+      if (!isFinalAnswerPass(body)) return ollamaEnvelope(validPostAnalysis());
+      return ollamaEnvelope(calls.filter(isFinalAnswerPass).length === 1
         ? duplicate
-        : validPostAnalysis());
+        : validFinalAnswers(request.rewriteDraft));
     },
   });
 
-  assert.deepEqual(models, [PRIMARY_MODEL, PRIMARY_MODEL]);
+  assert.equal(calls.length, 3);
+  const retryInput = JSON.parse(calls[2].messages[1].content);
+  assert.ok(retryInput.retryConstraints.some((item) => /duplicate/i.test(item)));
   assert.equal(result.modelUsed, PRIMARY_MODEL);
   assert.equal(new Set([
     result.correctedEnglish,
@@ -542,6 +558,114 @@ test("post-rewrite repairs duplicate final answers with fact-neutral discourse m
     result.modelAnswer,
     result.stretchAnswer,
   ].map((value) => value.toLowerCase().replace(/[^a-z0-9]/g, ""))).size, 4);
+  assert.doesNotMatch(result.naturalEnglish, /^Put simply,/i);
+  assert.doesNotMatch(result.modelAnswer, /^Here's how I'd explain it\./i);
+});
+
+test("post-rewrite hides duplicate fields when one retry still violates the contract", async () => {
+  const request = {
+    ...baseRequest,
+    stage: "post_rewrite",
+    rewriteDraft: "For the first time in a long time, I met my friend at a cafe.",
+  };
+  const duplicate = {
+    correctedEnglish: request.rewriteDraft,
+    naturalEnglish: request.rewriteDraft,
+    modelAnswer: request.rewriteDraft,
+    stretchAnswer: request.rewriteDraft,
+  };
+  let finalCalls = 0;
+  const result = await createCoachFeedback(request, {
+    fetchImpl: async (_url, init) => {
+      const body = JSON.parse(init.body);
+      if (!isFinalAnswerPass(body)) return ollamaEnvelope(validPostAnalysis());
+      finalCalls += 1;
+      return ollamaEnvelope(duplicate);
+    },
+  });
+
+  assert.equal(finalCalls, 2);
+  const answers = [
+    result.correctedEnglish,
+    result.naturalEnglish,
+    result.modelAnswer,
+    result.stretchAnswer,
+  ].filter(Boolean);
+  assert.equal(answers.length, 1);
+  assert.equal(answers[0], request.rewriteDraft);
+});
+
+test("post-rewrite retries unchanged corrections and weak AL stretch answers", async () => {
+  const request = {
+    ...baseRequest,
+    stage: "post_rewrite",
+    rewriteDraft: "I had plans with my friend, and we talked at a cafe.",
+  };
+  const weak = validFinalAnswers(request.rewriteDraft, {
+    correctedEnglish: request.rewriteDraft,
+    stretchAnswer: `Looking at it more broadly, ${request.rewriteDraft}`,
+  });
+  const strong = validFinalAnswers("I had plans with my friend, and we talked at a cafe.", {
+    correctedEnglish: "I had plans with my friend, and we caught up at a cafe.",
+  });
+  const calls = [];
+  const result = await createCoachFeedback(request, {
+    fetchImpl: async (_url, init) => {
+      const body = JSON.parse(init.body);
+      calls.push(body);
+      if (!isFinalAnswerPass(body)) {
+        return ollamaEnvelope(validPostAnalysis({
+          issues: [{
+            priority: 1,
+            original: "talked at a cafe",
+            corrected: "caught up at a cafe",
+            category: "naturalness",
+            explanationKo: "회화에서는 catch up이 자연스럽습니다.",
+          }],
+        }));
+      }
+      return ollamaEnvelope(calls.filter(isFinalAnswerPass).length === 1 ? weak : strong);
+    },
+  });
+
+  assert.equal(calls.length, 3);
+  const retryInput = JSON.parse(calls[2].messages[1].content);
+  assert.ok(retryInput.retryConstraints.some((item) => /correctedEnglish/i.test(item)));
+  assert.ok(retryInput.retryConstraints.some((item) => /stretchAnswer/i.test(item)));
+  assert.match(result.correctedEnglish, /caught up at a cafe/i);
+  assert.notEqual(result.stretchAnswer, weak.stretchAnswer);
+});
+
+test("target level changes final-generation guidance and resulting answer", async () => {
+  async function run(targetLevel) {
+    const request = {
+      ...baseRequest,
+      targetLevel,
+      stage: "post_rewrite",
+      rewriteDraft: "For the first time in a long time, I met my friend at a cafe.",
+    };
+    let guidance = "";
+    const result = await createCoachFeedback(request, {
+      fetchImpl: async (_url, init) => {
+        const body = JSON.parse(init.body);
+        if (!isFinalAnswerPass(body)) return ollamaEnvelope(validPostAnalysis());
+        const payload = JSON.parse(body.messages[1].content);
+        guidance = payload.targetGuidance;
+        return ollamaEnvelope(validFinalAnswers(request.rewriteDraft, {
+          modelAnswer: targetLevel === "AL"
+            ? `At the AL target, ${request.rewriteDraft}`
+            : `At the IH target, ${request.rewriteDraft}`,
+        }));
+      },
+    });
+    return { guidance, answer: result.modelAnswer };
+  }
+
+  const ih = await run("IH");
+  const al = await run("AL");
+  assert.match(ih.guidance, /IH/);
+  assert.match(al.guidance, /AL/);
+  assert.notEqual(ih.answer, al.answer);
 });
 
 test("fact guard allows a supported place already named in the Korean plan", async () => {

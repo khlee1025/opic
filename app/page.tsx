@@ -690,7 +690,7 @@ function RedlineAnswer({ text, issues }: { text: string; issues: CoachIssue[] })
 
 function FinalExplanation({ question, attempt, answerHidden, speakingSeconds, speakingRunning, onSpeakingToggle, onNext, onRetry, onOptionalRewrite }: { question: DailyQuestion; attempt: QuestionAttempt; answerHidden: boolean; speakingSeconds: number; speakingRunning: boolean; onSpeakingToggle: () => void; onNext: () => void; onRetry: () => void; onOptionalRewrite: (value: string) => void }) {
   const feedback = attempt.feedback ?? buildFallbackFeedback("post_rewrite", attempt);
-  const polishedAnswer = feedback.naturalEnglish || feedback.correctedEnglish || attempt.englishDraft;
+  const polishedAnswer = feedback.naturalEnglish || feedback.correctedEnglish;
   const candidates = feedback.source === "local-model"
     ? [
         { title: "말하기용 모범답안", content: feedback.modelAnswer, className: "model" },
@@ -720,10 +720,11 @@ function FinalExplanation({ question, attempt, answerHidden, speakingSeconds, sp
           <IssueCards feedback={feedback} />
         </section>
         {feedback.source !== "local-model" && <p className="rules-limit-note">현재 결과는 기본 규칙 교정입니다. 로컬 AI가 준비되기 전에는 자연스러운 개선본·모범답안·AL 확장 예시를 임의로 표시하지 않습니다.</p>}
-        <section className="answer-section polished">
+        {feedback.source === "local-model" && !polishedAnswer && answerSections.length === 0 && <p className="rules-limit-note">이번 생성 답안은 사실 보존·답안 차별화 검사를 통과하지 못해 숨겼습니다. 빨간펜 첨삭은 그대로 확인할 수 있으며, 필요하면 로컬 AI로 다시 시도하세요.</p>}
+        {polishedAnswer && <section className="answer-section polished">
           <div className="result-section-head"><div><span className="section-number">03</span><h3>자연스럽게 다듬은 완성 문단</h3></div><span className="answer-badge">내 내용 유지</span></div>
           <p className="answer-copy" lang="en">{polishedAnswer}</p>
-        </section>
+        </section>}
         {answerSections.map((section) => <section className={`answer-section ${section.className}`} key={section.title}><h3>{section.title}</h3><p className="answer-copy" lang="en">{section.content}</p></section>)}
         {Boolean(feedback.phraseUpgrades?.length) && <section className="answer-section"><h3>다시 쓸 수 있는 표현</h3><div className="phrase-chips">{feedback.phraseUpgrades?.map((phrase) => <span className="phrase-chip" key={`${phrase.from}-${phrase.to}`}>{phrase.to}</span>)}</div></section>}
         <details className="optional-rewrite">

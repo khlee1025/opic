@@ -727,7 +727,13 @@ function finalAnswerHardLocks(input) {
   return locks;
 }
 
-function finalAnswerSystemPrompt() {
+function targetGuidance(targetLevel) {
+  return targetLevel === "IH"
+    ? "IH target: keep the model answer direct and conversational with a clear answer, reason, one example, and closing. Prefer reliable control over complexity."
+    : "AL target: make the model and stretch answers structurally richer through subordinate clauses, varied discourse connectors, comparison or generalization, while adding no new facts.";
+}
+
+function finalAnswerSystemPrompt(targetLevel) {
   return `You are the final closed-book semantic regeneration pass for a private OPIc coach.
 Write all four answers using ONLY SOURCE.allowedPropositions. No earlier model answer candidates are provided or authorized.
 Every factual clause must be a direct paraphrase of exactly one allowed proposition. If it cannot be mapped to one, delete it.
@@ -742,13 +748,16 @@ Within each answer, express each allowed proposition at most once. Never repeat 
 Use connectors only between complete clauses. Never produce malformed transitions such as "So, First", "That is why The", or "In my case, The".
 Only fact-neutral connectors are allowed. New people, places, objects, examples, reasons, emotions, reactions, frequency, outcomes, inferred requests, and inferred speech are forbidden.
 Keep first-person viewpoint in all four answers. Prefer natural spoken English over formal wording. Avoid redundancy.
+TARGET GUIDANCE: ${targetGuidance(targetLevel)}
 Return JSON only.`;
 }
 
-function finalAnswerUserPayload(input) {
+function finalAnswerUserPayload(input, retryConstraints = []) {
   return JSON.stringify({
     task: "Regenerate four fact-locked final answers from the learner's submitted answer.",
     targetLevel: input.targetLevel,
+    targetGuidance: targetGuidance(input.targetLevel),
+    retryConstraints,
     questionContextOnly: input.question,
     source: {
       rewriteDraft: input.rewriteDraft,
@@ -855,12 +864,19 @@ async function requestLocalModel(model, input, fetchImpl, timeoutMs, externalSig
   }, fetchImpl, timeoutMs, externalSignal);
 }
 
-async function requestFinalAnswerModel(model, input, fetchImpl, timeoutMs, externalSignal) {
+async function requestFinalAnswerModel(
+  model,
+  input,
+  fetchImpl,
+  timeoutMs,
+  externalSignal,
+  retryConstraints = [],
+) {
   return requestModelJson({
     model,
     messages: [
-      { role: "system", content: finalAnswerSystemPrompt() },
-      { role: "user", content: finalAnswerUserPayload(input) },
+      { role: "system", content: finalAnswerSystemPrompt(input.targetLevel) },
+      { role: "user", content: finalAnswerUserPayload(input, retryConstraints) },
     ],
     stream: false,
     think: false,
@@ -1188,32 +1204,119 @@ function comparableAnswerKey(value) {
     .replace(/[\p{P}\p{S}\s]+/gu, "");
 }
 
-function ensureDistinctFinalAnswers(fields) {
-  const prefixes = {
-    naturalEnglish: "Put simply, ",
-    modelAnswer: "Here's how I'd explain it. ",
-    stretchAnswer: "Looking at it more broadly, ",
-  };
-  const result = { ...fields };
-  const seen = new Set();
-  for (const field of [
-    "correctedEnglish",
-    "naturalEnglish",
-    "modelAnswer",
-    "stretchAnswer",
-  ]) {
-    let value = result[field];
-    if (!value) continue;
-    let key = comparableAnswerKey(value);
-    if (seen.has(key)) {
-      value = `${prefixes[field] ?? "In other words, "}${value}`;
-      key = comparableAnswerKey(value);
+const FINAL_ANSWER_FIELDS = [
+  "correctedEnglish",
+  "naturalEnglish",
+  "modelAnswer",
+  "stretchAnswer",
+];
+
+const DISCOURSE_CONNECTORS = [
+  /\bactually\b/iu,
+  /\bbecause\b/iu,
+  /\bfor example\b/iu,
+  /\bhowever\b/iu,
+  /\bin my case\b/iu,
+  /\bon top of that\b/iu,
+  /\bas a result\b/iu,
+  /\bat the same time\b/iu,
+  /\bthat said\b/iu,
+  /\boverall\b/iu,
+  /\bin the end\b/iu,
+  /\bso\b/iu,
+];
+
+function subordinateClauseCount(text) {
+  return (text.match(/\b(?:although|because|even though|if|since|unless|when|whenever|whereas|which|while|who|that)\b/giu) ?? []).length;
+}
+
+function discourseConnectorCount(text) {
+  return DISCOURSE_CONNECTORS.filter((pattern) => pattern.test(text)).length;
+}
+
+function tokenOverlapRatio(candidate, reference) {
+  const candidateTokens = contentWords(candidate);
+  if (!candidateTokens.length) return 1;
+  const referenceTokens = new Set(contentWords(reference));
+  const shared = candidateTokens.filter((token) => referenceTokens.has(token)).length;
+  return shared / candidateTokens.length;
+}
+
+function hasActionableAnalysisIssues(analysis, input) {
+  if (!Array.isArray(analysis?.issues)) return false;
+  const sourceDraft = input.stage === "post_rewrite" ? input.rewriteDraft : input.englishDraft;
+  return analysis.issues.some((rawIssue) => {
+    const original = findWhitespaceNormalizedSpan(
+      sourceDraft,
+      safeString(rawIssue?.original, 500),
+    );
+    const corrected = sanitizeUnsupportedElaboration(
+      safeString(rawIssue?.corrected, 500),
+      input,
+    );
+    const issue = { original, corrected };
+    return original &&
+      corrected &&
+      !addsUnsupportedFacts(corrected, input) &&
+      !addsForbiddenSemanticMarkers(corrected, input) &&
+      !reversesTaughtCorrection(issue, input);
+  });
+}
+
+function inspectFinalAnswerContract(finalAnswers, analysis, input) {
+  const invalidFields = new Set();
+  const retryConstraints = [];
+  const fields = Object.fromEntries(
+    FINAL_ANSWER_FIELDS.map((field) => [field, safeString(finalAnswers?.[field])]),
+  );
+
+  for (const field of FINAL_ANSWER_FIELDS) {
+    if (!fields[field]) {
+      invalidFields.add(field);
+      retryConstraints.push(`${field}: missing or empty`);
     }
-    if (seen.has(key)) throw new LocalModelError("MODEL_CONTRACT_ERROR");
-    result[field] = value;
-    seen.add(key);
   }
-  return result;
+
+  if (
+    hasActionableAnalysisIssues(analysis, input) &&
+    comparableAnswerKey(fields.correctedEnglish) === comparableAnswerKey(input.rewriteDraft)
+  ) {
+    invalidFields.add("correctedEnglish");
+    retryConstraints.push("correctedEnglish: unchanged even though the analysis found issues");
+  }
+
+  const firstFieldByKey = new Map();
+  for (const field of FINAL_ANSWER_FIELDS) {
+    if (!fields[field]) continue;
+    const key = comparableAnswerKey(fields[field]);
+    const duplicateOf = firstFieldByKey.get(key);
+    if (duplicateOf) {
+      invalidFields.add(field);
+      retryConstraints.push(`${field}: duplicate of ${duplicateOf}`);
+    } else {
+      firstFieldByKey.set(key, field);
+    }
+  }
+
+  if (fields.stretchAnswer) {
+    const subordinateClauses = subordinateClauseCount(fields.stretchAnswer);
+    const connectors = discourseConnectorCount(fields.stretchAnswer);
+    const overlap = tokenOverlapRatio(
+      fields.stretchAnswer,
+      fields.correctedEnglish || input.rewriteDraft,
+    );
+    if (subordinateClauses < 2 || connectors < 3 || overlap >= 0.7) {
+      invalidFields.add("stretchAnswer");
+      retryConstraints.push(
+        `stretchAnswer: needs at least 2 subordinate clauses, 3 distinct connectors, and token overlap below 70% (received ${subordinateClauses}, ${connectors}, ${Math.round(overlap * 100)}%)`,
+      );
+    }
+  }
+
+  return {
+    invalidFields,
+    retryConstraints: [...new Set(retryConstraints)],
+  };
 }
 
 function escapeRegex(value) {
@@ -1254,7 +1357,7 @@ function isolateGeneratedAnswer(value, input) {
   return sanitized;
 }
 
-function normalizeModelFeedback(raw, input, model) {
+function normalizeModelFeedback(raw, input, model, invalidFinalFields = new Set()) {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
     throw new LocalModelError("MODEL_CONTRACT_ERROR");
   }
@@ -1317,10 +1420,9 @@ function normalizeModelFeedback(raw, input, model) {
       };
 
   if (isPostRewrite) {
-    if (Object.values(revealFields).every((value) => !value)) {
-      throw new LocalModelError("MODEL_CONTRACT_ERROR");
+    for (const field of invalidFinalFields) {
+      if (FINAL_ANSWER_FIELDS.includes(field)) revealFields[field] = null;
     }
-    revealFields = ensureDistinctFinalAnswers(revealFields);
   }
 
   const phraseUpgrades = isPostRewrite && Array.isArray(raw.phraseUpgrades)
@@ -1380,30 +1482,49 @@ export async function createCoachFeedback(value, options = {}) {
       break;
     }
     try {
-      let raw = await requestLocalModel(
+      const analysis = await requestLocalModel(
         model,
         input,
         fetchImpl,
         remainingMs,
         options.signal,
       );
+      let raw = analysis;
+      let invalidFinalFields = new Set();
       if (input.stage === "post_rewrite") {
         const finalPassRemainingMs = deadline - Date.now();
         if (finalPassRemainingMs <= 0) {
           throw new LocalModelError("MODEL_TIMEOUT");
         }
-        const finalAnswers = await requestFinalAnswerModel(
+        let finalAnswers = await requestFinalAnswerModel(
           model,
           input,
           fetchImpl,
           finalPassRemainingMs,
           options.signal,
         );
+        let contract = inspectFinalAnswerContract(finalAnswers, analysis, input);
+        if (contract.invalidFields.size > 0) {
+          const retryRemainingMs = deadline - Date.now();
+          if (retryRemainingMs <= 0) {
+            throw new LocalModelError("MODEL_TIMEOUT");
+          }
+          finalAnswers = await requestFinalAnswerModel(
+            model,
+            input,
+            fetchImpl,
+            retryRemainingMs,
+            options.signal,
+            contract.retryConstraints,
+          );
+          contract = inspectFinalAnswerContract(finalAnswers, analysis, input);
+        }
+        invalidFinalFields = contract.invalidFields;
         // The second pass never receives first-pass candidates. Only its four
         // fact-locked answers replace the analysis pass's null answer fields.
-        raw = { ...raw, ...finalAnswers };
+        raw = { ...analysis, ...finalAnswers };
       }
-      return normalizeModelFeedback(raw, input, model);
+      return normalizeModelFeedback(raw, input, model, invalidFinalFields);
     } catch (error) {
       // The fallback intentionally records no exception text because a model
       // error can contain fragments of the learner's private answer.
