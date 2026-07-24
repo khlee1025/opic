@@ -190,6 +190,7 @@ test("local model request is fixed to loopback, disables thinking/streaming, and
   assert.equal(calls[0].body.format.properties.stage.enum[0], "feedback");
   assert.equal(calls[0].body.format.properties.correctedEnglish.type, "null");
   assert.equal(calls[0].body.options.num_predict, 600);
+  assert.equal(calls[0].body.options.num_ctx, 2048);
   const systemPrompt = calls[0].body.messages[0].content;
   assert.ok(systemPrompt.length <= Math.floor(3_519 * 0.7));
   assert.match(systemPrompt, /issues.*empty array|issues:\s*\[\]/i);
@@ -232,6 +233,7 @@ test("post-rewrite uses analysis-only then closed-book answer generation", async
   assert.deepEqual(finalBody.format, FINAL_ANSWER_RESPONSE_SCHEMA);
   assert.equal(finalBody.options.temperature, 0);
   assert.equal(finalBody.options.num_predict, 800);
+  assert.equal(finalBody.options.num_ctx, 2048);
   assert.equal(finalBody.keep_alive, "30m");
   const finalInput = JSON.parse(finalBody.messages[1].content);
   assert.deepEqual(finalInput.source.allowedPropositions, [request.rewriteDraft]);
@@ -1287,7 +1289,7 @@ test("model warmup uses only a fixed synthetic prompt and keeps the model reside
   assert.equal(warmupBody.model, PRIMARY_MODEL);
   assert.equal(warmupBody.keep_alive, "30m");
   assert.equal(warmupBody.think, false);
-  assert.equal(warmupBody.options.num_ctx, 4096);
+  assert.equal(warmupBody.options.num_ctx, 2048);
   assert.equal(warmupBody.messages[0].content, "Reply with only the word ready.");
   assert.doesNotMatch(JSON.stringify(warmupBody), /friend|cafe|koreanPlan/i);
 });

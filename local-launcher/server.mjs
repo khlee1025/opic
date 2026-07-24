@@ -438,7 +438,7 @@ export async function launchLocalModelEngine(options = {}) {
       OLLAMA_HOST: "127.0.0.1:11435",
       OLLAMA_MODELS: modelsPath,
       OLLAMA_NO_CLOUD: "1",
-      OLLAMA_CONTEXT_LENGTH: "4096",
+      OLLAMA_CONTEXT_LENGTH: "2048",
       OLLAMA_FLASH_ATTENTION: "1",
       OLLAMA_KV_CACHE_TYPE: "q8_0",
       OLLAMA_KEEP_ALIVE: "10m",
@@ -481,7 +481,7 @@ export async function warmLocalModel(options = {}) {
         keep_alive: "30m",
         options: {
           temperature: 0,
-          num_ctx: 4096,
+          num_ctx: 2048,
           num_predict: 8,
         },
       }),

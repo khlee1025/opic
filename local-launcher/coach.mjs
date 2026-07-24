@@ -270,7 +270,7 @@ function inputContextUnits(parts) {
   for (const part of parts) {
     for (const character of part) {
       // Korean characters generally consume more model context than English
-      // letters, so weight them conservatively before the 4K Ollama window.
+      // letters, so weight them conservatively before the 2K Ollama window.
       units += character.codePointAt(0) <= 0x7f ? 1 : 4;
     }
   }
@@ -888,7 +888,7 @@ async function requestLocalModel(model, input, fetchImpl, timeoutMs, externalSig
       temperature: 0,
       top_p: 0.85,
       repeat_penalty: 1.05,
-      num_ctx: 4096,
+      num_ctx: 2048,
       num_predict: 600,
     },
   }, fetchImpl, timeoutMs, externalSignal);
@@ -924,7 +924,7 @@ async function requestFinalAnswerModel(
       temperature: 0,
       top_p: 0.8,
       repeat_penalty: 1.05,
-      num_ctx: 4096,
+      num_ctx: 2048,
       // The closed-book pass emits only four answers. The tested home sample
       // used 336 tokens, leaving ample headroom without restoring the former
       // 1,600-token monolithic response.
