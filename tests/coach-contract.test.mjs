@@ -1023,6 +1023,39 @@ test("fact guard isolates an invented trip home even when home appears as a plac
   );
 });
 
+test("fact guard isolates an invented solo comparison", async () => {
+  const request = {
+    ...baseRequest,
+    stage: "post_rewrite",
+    koreanPlan: {
+      answer: "집 근처 헬스장에서 운동한다.",
+      reason: "스트레스를 풀고 건강을 유지할 수 있다.",
+      example: "지난 금요일 친구와 한 시간 운동했다.",
+      closing: "그곳은 나에게 중요한 장소다.",
+    },
+    englishDraft: "I exercise at a gym near my home.",
+    rewriteDraft: "I exercise at a gym near my home. Last Friday, I worked out with my friend for one hour.",
+  };
+  const unsafeModel = `${request.rewriteDraft} It was better than going alone.`;
+  const result = await createCoachFeedback(request, {
+    fetchImpl: async (_url, init) => {
+      const body = JSON.parse(init.body);
+      return ollamaEnvelope(isFinalAnswerPass(body)
+        ? validFinalAnswers(request.rewriteDraft, { modelAnswer: unsafeModel })
+        : validPostAnalysis());
+    },
+  });
+
+  assert.equal(result.source, "local-model");
+  assert.equal(result.modelAnswer, null);
+  assert.ok(result.correctedEnglish);
+  assert.ok(result.naturalEnglish);
+  assert.doesNotMatch(
+    Object.values(result).filter((value) => typeof value === "string").join("\n"),
+    /going alone/i,
+  );
+});
+
 test("post-rewrite preserves corrections already taught by the coach", async () => {
   const request = {
     ...baseRequest,

@@ -1217,6 +1217,10 @@ const INFERENCE_MARKER_GROUPS = [
     candidate: /\b(?:go(?:ing)?|went|head(?:ed|ing)?|return(?:ed|ing)?)\s+home\b/iu,
     source: /\b(?:go(?:ing)?|went|head(?:ed|ing)?|return(?:ed|ing)?)\s+home\b|(?:집에\s*(?:갔|가|돌아|왔)|귀가)/iu,
   },
+  {
+    candidate: /\b(?:alone|by\s+(?:myself|ourselves)|on\s+(?:my|our)\s+own)\b/iu,
+    source: /\b(?:alone|by\s+(?:myself|ourselves)|on\s+(?:my|our)\s+own)\b|(?:혼자|나\s*혼자|우리끼리)/iu,
+  },
 ];
 
 function addsForbiddenSemanticMarkers(candidate, input) {
