@@ -20,6 +20,11 @@ test("stop script validates the local service and terminates its process tree", 
   assert.match(source, /Get-Process\s+-Id\s+\$serverProcessId/i);
 });
 
+test("Windows PowerShell 5.1 checks the frontend without the legacy IE engine", async () => {
+  const source = await readFile(new URL("../installer/launch.ps1", import.meta.url), "utf8");
+  assert.match(source, /Invoke-WebRequest[\s\S]*-UseBasicParsing/i);
+});
+
 test("Windows child cleanup uses taskkill for the full process tree", async () => {
   const calls = [];
   let directKills = 0;

@@ -125,7 +125,7 @@ try {
     }
 
     try {
-      $page = Invoke-WebRequest -Uri $appUrl -Method Get -TimeoutSec 2
+      $page = Invoke-WebRequest -Uri $appUrl -Method Get -UseBasicParsing -TimeoutSec 2
       $frontendReady = $page.StatusCode -eq 200 -and $page.Content -match "OPIc Daily Coach"
     } catch {
       $frontendReady = $false
