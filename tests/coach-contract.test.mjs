@@ -15,6 +15,7 @@ import {
   MAX_MODEL_TOTAL_TIMEOUT_MS,
   OLLAMA_BASE_URL,
   PRIMARY_MODEL,
+  RETRY_TIMEOUT_MS,
   applyLocalRules,
   createCoachFeedback,
   validateCoachRequest,
@@ -159,9 +160,14 @@ test("Ollama response schema omits unsupported grammar constraints", () => {
       assert.equal(keys.has(unsupported), false, `${unsupported} must be normalized in code instead`);
     }
   }
-  assert.equal(ANALYSIS_TIMEOUT_MS, 40_000);
+  assert.equal(ANALYSIS_TIMEOUT_MS, 45_000);
   assert.equal(FINAL_TIMEOUT_MS, 30_000);
+  assert.equal(RETRY_TIMEOUT_MS, 15_000);
   assert.equal(MAX_MODEL_TOTAL_TIMEOUT_MS, 90_000);
+  assert.equal(
+    ANALYSIS_TIMEOUT_MS + FINAL_TIMEOUT_MS + RETRY_TIMEOUT_MS,
+    MAX_MODEL_TOTAL_TIMEOUT_MS,
+  );
 });
 
 test("local model request is fixed to loopback, disables thinking/streaming, and hides answers before rewrite", async () => {
