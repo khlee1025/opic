@@ -756,6 +756,7 @@ function finalAnswerSystemPrompt(targetLevel) {
   return `You are the final closed-book semantic regeneration pass for a private OPIc coach.
 Write all four answers using ONLY SOURCE.allowedPropositions. No earlier model answer candidates are provided or authorized.
 Every factual clause must be a direct paraphrase of exactly one allowed proposition. If it cannot be mapped to one, delete it.
+SOURCE.requiredCorrections lists rejected phrases from the same review. Apply each correction or a faithful paraphrase in every answer; never repeat a rejected phrase.
 HARD LOCKS are literal constraints. Never infer what a person said, wanted, felt, or did from the speaker's later action. Preserve event frequency exactly.
 HARD LOCKS are silent editing constraints: never state them in the answers and never mention the learner, source, facts, unknown information, or the audit.
 Keep the four answers distinct in wording and discourse structure:
@@ -771,7 +772,7 @@ TARGET GUIDANCE: ${targetGuidance(targetLevel)}
 Return JSON only.`;
 }
 
-function finalAnswerUserPayload(input, retryConstraints = []) {
+function finalAnswerUserPayload(input, retryConstraints = [], requiredCorrections = []) {
   return JSON.stringify({
     task: "Regenerate four fact-locked final answers from the learner's submitted answer.",
     targetLevel: input.targetLevel,
@@ -782,6 +783,7 @@ function finalAnswerUserPayload(input, retryConstraints = []) {
       rewriteDraft: input.rewriteDraft,
       discoursePlan: input.koreanPlan,
       allowedPropositions: rewriteSentencePropositions(input.rewriteDraft),
+      requiredCorrections,
       hardLocks: finalAnswerHardLocks(input),
     },
   });
@@ -890,12 +892,20 @@ async function requestFinalAnswerModel(
   timeoutMs,
   externalSignal,
   retryConstraints = [],
+  requiredCorrections = [],
 ) {
   return requestModelJson({
     model,
     messages: [
       { role: "system", content: finalAnswerSystemPrompt(input.targetLevel) },
-      { role: "user", content: finalAnswerUserPayload(input, retryConstraints) },
+      {
+        role: "user",
+        content: finalAnswerUserPayload(
+          input,
+          retryConstraints,
+          requiredCorrections,
+        ),
+      },
     ],
     stream: false,
     think: false,
@@ -1261,30 +1271,64 @@ function tokenOverlapRatio(candidate, reference) {
   return shared / candidateTokens.length;
 }
 
-function hasActionableAnalysisIssues(analysis, input) {
-  if (!Array.isArray(analysis?.issues)) return false;
+function actionableCorrections(analysis, input) {
   const sourceDraft = input.stage === "post_rewrite" ? input.rewriteDraft : input.englishDraft;
-  return analysis.issues.some((rawIssue) => {
-    const original = findWhitespaceNormalizedSpan(
-      sourceDraft,
-      safeString(rawIssue?.original, 500),
-    );
-    const corrected = sanitizeUnsupportedElaboration(
-      safeString(rawIssue?.corrected, 500),
-      input,
-    );
-    const issue = { original, corrected };
-    return original &&
-      corrected &&
-      !addsUnsupportedFacts(corrected, input) &&
-      !addsForbiddenSemanticMarkers(corrected, input) &&
-      !reversesTaughtCorrection(issue, input);
+  const modelCorrections = (Array.isArray(analysis?.issues) ? analysis.issues : [])
+    .map((rawIssue) => {
+      const original = findWhitespaceNormalizedSpan(
+        sourceDraft,
+        safeString(rawIssue?.original, 500),
+      );
+      const corrected = sanitizeUnsupportedElaboration(
+        safeString(rawIssue?.corrected, 500),
+        input,
+      );
+      const issue = { original, corrected };
+      return original &&
+        corrected &&
+        !addsUnsupportedFacts(corrected, input) &&
+        !addsForbiddenSemanticMarkers(corrected, input) &&
+        !reversesTaughtCorrection(issue, input)
+        ? issue
+        : null;
+    })
+    .filter(Boolean);
+  const localCorrections = ruleMatches(sourceDraft, input.koreanPlan)
+    .map(({ original, corrected }) => ({ original, corrected }));
+  const seen = new Set();
+  return [...localCorrections, ...modelCorrections]
+    .filter(({ original, corrected }) => {
+      const key = normalizedWords(original);
+      if (
+        !key ||
+        key === normalizedWords(corrected) ||
+        seen.has(key)
+      ) {
+        return false;
+      }
+      seen.add(key);
+      return true;
+    })
+    .slice(0, 6);
+}
+
+function hasActionableAnalysisIssues(analysis, input) {
+  return actionableCorrections(analysis, input).length > 0;
+}
+
+function retainedRejectedPhrases(answer, corrections) {
+  const normalizedAnswer = normalizedWords(answer);
+  return corrections.filter(({ original }) => {
+    const rejected = normalizedWords(original);
+    const wordCount = rejected.split(/\s+/).filter(Boolean).length;
+    return wordCount >= 2 && normalizedAnswer.includes(rejected);
   });
 }
 
 function inspectFinalAnswerContract(finalAnswers, analysis, input) {
   const invalidFields = new Set();
   const retryConstraints = [];
+  const requiredCorrections = actionableCorrections(analysis, input);
   const fields = Object.fromEntries(
     FINAL_ANSWER_FIELDS.map((field) => [field, safeString(finalAnswers?.[field])]),
   );
@@ -1293,6 +1337,14 @@ function inspectFinalAnswerContract(finalAnswers, analysis, input) {
     if (!fields[field]) {
       invalidFields.add(field);
       retryConstraints.push(`${field}: missing or empty`);
+      continue;
+    }
+    const retained = retainedRejectedPhrases(fields[field], requiredCorrections);
+    if (retained.length) {
+      invalidFields.add(field);
+      retryConstraints.push(
+        `${field}: still contains rejected phrase "${retained[0].original}"; apply "${retained[0].corrected}" or a faithful paraphrase`,
+      );
     }
   }
 
@@ -1515,12 +1567,15 @@ export async function createCoachFeedback(value, options = {}) {
       let raw = analysis;
       let invalidFinalFields = new Set();
       if (input.stage === "post_rewrite") {
+        const requiredCorrections = actionableCorrections(analysis, input);
         let finalAnswers = await requestFinalAnswerModel(
           model,
           input,
           fetchImpl,
           Math.min(FINAL_TIMEOUT_MS, timeoutCap),
           options.signal,
+          [],
+          requiredCorrections,
         );
         let contract = inspectFinalAnswerContract(finalAnswers, analysis, input);
         if (contract.invalidFields.size > 0) {
@@ -1531,6 +1586,7 @@ export async function createCoachFeedback(value, options = {}) {
             Math.min(RETRY_TIMEOUT_MS, timeoutCap),
             options.signal,
             contract.retryConstraints,
+            requiredCorrections,
           );
           contract = inspectFinalAnswerContract(finalAnswers, analysis, input);
         }

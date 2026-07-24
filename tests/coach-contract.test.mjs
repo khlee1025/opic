@@ -679,6 +679,77 @@ test("post-rewrite retries unchanged corrections and weak AL stretch answers", a
   assert.notEqual(result.stretchAnswer, weak.stretchAnswer);
 });
 
+test("final answer cards cannot repeat phrases rejected by the same review", async () => {
+  const request = {
+    ...baseRequest,
+    stage: "post_rewrite",
+    koreanPlan: {
+      answer: "집 근처 헬스장에서 운동한다.",
+      reason: "스트레스를 풀고 건강을 유지하기 좋다.",
+      example: "지난 금요일에 친구와 한 시간 운동했다.",
+      closing: "그곳은 나에게 가장 편한 충전 공간이다.",
+    },
+    englishDraft: "I exercise at a gym near my home.",
+    rewriteDraft: "I exercise at a gym near my home. Last Friday, I had a promise with my friend and we played exercise for one hour.",
+  };
+  const analysis = validPostAnalysis({
+    issues: [
+      {
+        priority: 1,
+        original: "I had a promise with my friend",
+        corrected: "I had plans with my friend",
+        category: "naturalness",
+        explanationKo: "약속이 있었다는 뜻에는 had plans가 자연스럽습니다.",
+      },
+      {
+        priority: 2,
+        original: "we played exercise for one hour",
+        corrected: "we exercised for one hour",
+        category: "grammar",
+        explanationKo: "exercise를 동사로 사용해야 합니다.",
+      },
+    ],
+  });
+  const rejected = validFinalAnswers(request.rewriteDraft);
+  const repairedBase = "I exercise at a gym near my home. Last Friday, I had plans with my friend and we exercised for one hour.";
+  const repaired = validFinalAnswers(repairedBase);
+  const calls = [];
+
+  const result = await createCoachFeedback(request, {
+    fetchImpl: async (_url, init) => {
+      const body = JSON.parse(init.body);
+      calls.push(body);
+      if (!isFinalAnswerPass(body)) return ollamaEnvelope(analysis);
+      return ollamaEnvelope(calls.filter(isFinalAnswerPass).length === 1
+        ? rejected
+        : repaired);
+    },
+  });
+
+  assert.equal(calls.length, 3);
+  const firstFinalInput = JSON.parse(calls[1].messages[1].content);
+  assert.deepEqual(firstFinalInput.source.requiredCorrections, [
+    {
+      original: "I had a promise with my friend",
+      corrected: "I had plans with my friend",
+    },
+    {
+      original: "we played exercise for one hour",
+      corrected: "we exercised for one hour",
+    },
+  ]);
+  const retryInput = JSON.parse(calls[2].messages[1].content);
+  assert.ok(retryInput.retryConstraints.some((item) => /rejected phrase/i.test(item)));
+  for (const answer of [
+    result.correctedEnglish,
+    result.naturalEnglish,
+    result.modelAnswer,
+    result.stretchAnswer,
+  ].filter(Boolean)) {
+    assert.doesNotMatch(answer, /had a promise|played exercise/i);
+  }
+});
+
 test("target level changes final-generation guidance and resulting answer", async () => {
   async function run(targetLevel) {
     const request = {
