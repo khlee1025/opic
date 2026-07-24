@@ -19,7 +19,10 @@ import {
   type DailyQuestion,
 } from "./data/questions";
 import { APP_VERSION } from "./lib/version";
-import { getPreviousPracticeStage } from "./lib/practice";
+import {
+  appliedCorrectionsForDraft,
+  getPreviousPracticeStage,
+} from "./lib/practice";
 import { buildRedlineSegments } from "./lib/redline";
 import { applyDeterministicRules, detectRuleIssues } from "./lib/rules";
 import {
@@ -295,10 +298,10 @@ async function fetchCoachFeedback(
         firstDraftReview: stage === "post_rewrite" &&
           comparableText(attempt.englishRewrite) === comparableText(attempt.englishDraft),
         appliedCorrections: stage === "post_rewrite"
-          ? (attempt.feedback?.issues ?? []).map((issue) => ({
-              from: issue.original,
-              to: issue.suggestion,
-            }))
+          ? appliedCorrectionsForDraft(
+              attempt.englishRewrite,
+              attempt.feedback?.issues ?? [],
+            )
           : [],
       }),
     });

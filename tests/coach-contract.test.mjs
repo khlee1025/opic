@@ -1153,6 +1153,22 @@ test("request validation requires Korean planning and protects legacy rewrite su
   assert.equal(firstDraftReview.rewriteDraft, firstDraftReview.englishDraft);
 });
 
+test("request validation ignores corrections not actually applied to the current draft", () => {
+  const normalized = validateCoachRequest({
+    ...baseRequest,
+    stage: "post_rewrite",
+    firstDraftReview: true,
+    rewriteDraft: baseRequest.englishDraft,
+    appliedCorrections: [
+      {
+        from: "I had a promise with my friend",
+        to: "I had plans with my friend",
+      },
+    ],
+  });
+  assert.deepEqual(normalized.appliedCorrections, []);
+});
+
 test("request validation caps aggregate prompt context before model invocation", () => {
   assert.throws(
     () => validateCoachRequest({

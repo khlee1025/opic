@@ -16,3 +16,27 @@ export function getPreviousPracticeStage(
 ): PracticeStage | null {
   return PREVIOUS_STAGE[stage];
 }
+
+function comparablePhrase(value: string): string {
+  return value
+    .normalize("NFKC")
+    .toLocaleLowerCase("en-US")
+    .replace(/[\p{P}\p{S}\s]+/gu, "");
+}
+
+export function appliedCorrectionsForDraft(
+  draft: string,
+  issues: ReadonlyArray<{ original: string; suggestion: string }>,
+): Array<{ from: string; to: string }> {
+  const normalizedDraft = comparablePhrase(draft);
+  return issues
+    .filter((issue) => {
+      const rejected = comparablePhrase(issue.original);
+      const accepted = comparablePhrase(issue.suggestion);
+      return rejected &&
+        accepted &&
+        normalizedDraft.includes(accepted) &&
+        !normalizedDraft.includes(rejected);
+    })
+    .map((issue) => ({ from: issue.original, to: issue.suggestion }));
+}

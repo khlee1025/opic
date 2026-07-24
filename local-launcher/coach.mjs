@@ -326,9 +326,17 @@ export function validateCoachRequest(value) {
       "rewriteDraft",
       MAX_DRAFT_CHARS,
     );
+    const normalizedRewrite = normalizedRewriteText(normalized.rewriteDraft);
+    normalized.appliedCorrections = normalized.appliedCorrections.filter((item) => {
+      const rejected = normalizedRewriteText(item.from);
+      const accepted = normalizedRewriteText(item.to);
+      return accepted &&
+        normalizedRewrite.includes(accepted) &&
+        !normalizedRewrite.includes(rejected);
+    });
     if (
       !normalized.firstDraftReview &&
-      normalizedRewriteText(normalized.rewriteDraft) ===
+      normalizedRewrite ===
       normalizedRewriteText(normalized.englishDraft)
     ) {
       throw new CoachInputError(
