@@ -248,6 +248,12 @@ async function fetchCoachFeedback(
         rewriteDraft: stage === "post_rewrite" ? attempt.englishRewrite : "",
         firstDraftReview: stage === "post_rewrite" &&
           comparableText(attempt.englishRewrite) === comparableText(attempt.englishDraft),
+        appliedCorrections: stage === "post_rewrite"
+          ? (attempt.feedback?.issues ?? []).map((issue) => ({
+              from: issue.original,
+              to: issue.suggestion,
+            }))
+          : [],
       }),
     });
     window.clearTimeout(timer);

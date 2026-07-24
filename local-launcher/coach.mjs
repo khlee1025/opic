@@ -242,6 +242,17 @@ function normalizePlan(value) {
   return plan;
 }
 
+function normalizeAppliedCorrections(value) {
+  if (!Array.isArray(value)) return [];
+  return value
+    .slice(0, 6)
+    .map((item, index) => ({
+      from: optionalText(item?.from ?? item?.original, `appliedCorrections.${index}.from`, 500),
+      to: optionalText(item?.to ?? item?.corrected, `appliedCorrections.${index}.to`, 500),
+    }))
+    .filter((item) => item.from && item.to);
+}
+
 function normalizedRewriteText(value) {
   return value
     .normalize("NFKC")
@@ -267,6 +278,7 @@ function assertAggregateInputLimit(input) {
     ...Object.values(input.koreanPlan),
     input.englishDraft,
     input.rewriteDraft,
+    ...input.appliedCorrections.flatMap((item) => [item.from, item.to]),
   ];
   const totalCharacters = parts.reduce((sum, part) => sum + part.length, 0);
   if (
@@ -300,6 +312,7 @@ export function validateCoachRequest(value) {
     englishDraft: requireText(value.englishDraft, "englishDraft", MAX_DRAFT_CHARS),
     rewriteDraft: "",
     firstDraftReview: value.firstDraftReview === true,
+    appliedCorrections: normalizeAppliedCorrections(value.appliedCorrections),
   };
 
   if (stage === "post_rewrite") {
@@ -372,48 +385,64 @@ const LOCAL_RULES = [
   {
     pattern: /\bI had a promise with (my|a) friend(s)?\b/gi,
     correction: (match) => match.replace(/I had a promise with/i, "I had plans with"),
+    preferredForm: "had plans with",
+    preferredPattern: /\bhad plans with\b/i,
     category: "naturalness",
     explanationKo: "한국어의 '약속이 있었다'는 보통 have plans로 표현합니다.",
   },
   {
     pattern: /\bI play with my friends\b/gi,
     correction: () => "I hang out with my friends",
+    preferredForm: "hang out with friends",
+    preferredPattern: /\bhang out with\b/i,
     category: "naturalness",
     explanationKo: "성인이 친구와 시간을 보낸다는 뜻이면 play보다 hang out이 자연스럽습니다.",
   },
   {
     pattern: /\bI played with my friends\b/gi,
     correction: () => "I hung out with my friends",
+    preferredForm: "hung out with friends",
+    preferredPattern: /\bhung out with\b/i,
     category: "naturalness",
     explanationKo: "과거의 친교 활동은 hung out with my friends가 자연스럽습니다.",
   },
   {
     pattern: /\bwent to home\b/gi,
     correction: () => "went home",
+    preferredForm: "went home",
+    preferredPattern: /\bwent home\b/i,
     category: "grammar",
     explanationKo: "home이 이동 방향을 나타낼 때는 전치사 to를 쓰지 않습니다.",
   },
   {
     pattern: /\bmy condition was bad\b/gi,
     correction: () => "I wasn't feeling well",
+    preferredForm: "wasn't feeling well",
+    preferredPattern: /\bwas(?:n't| not) feeling well\b/i,
     category: "naturalness",
     explanationKo: "몸 상태가 좋지 않았다는 말은 wasn't feeling well이 자연스럽습니다.",
   },
   {
     pattern: /\bate (?:some )?medicine\b/gi,
     correction: () => "took some medicine",
+    preferredForm: "took some medicine",
+    preferredPattern: /\btook (?:some )?medicine\b/i,
     category: "naturalness",
     explanationKo: "약을 복용하다는 eat가 아니라 take medicine으로 표현합니다.",
   },
   {
     pattern: /\btook a rest\b/gi,
     correction: () => "got some rest",
+    preferredForm: "got some rest",
+    preferredPattern: /\bgot some rest\b/i,
     category: "naturalness",
     explanationKo: "회화에서는 got some rest가 더 자연스럽습니다.",
   },
   {
     pattern: /\bafter a long time\b/gi,
     correction: () => "for the first time in a long time",
+    preferredForm: "for the first time in a long time",
+    preferredPattern: /\bfor the first time in a long time\b/i,
     category: "naturalness",
     explanationKo: "'오랜만에'는 for the first time in a long time으로 뜻이 선명해집니다.",
     applies: (text, index) => repeatedActivityContext(phraseContext(text, index)),
@@ -421,6 +450,8 @@ const LOCAL_RULES = [
   {
     pattern: /\bpension\b/gi,
     correction: () => "vacation rental",
+    preferredForm: "vacation rental",
+    preferredPattern: /\bvacation rental\b/i,
     category: "meaning",
     explanationKo: "한국의 숙박시설 '펜션'은 영어로 vacation rental이라고 해야 의미가 통합니다.",
     applies: (text, index, koreanPlan) =>
@@ -429,18 +460,24 @@ const LOCAL_RULES = [
   {
     pattern: /\bI am difficult to ([a-z]+(?:\s+up)?)\b/gi,
     correction: (_match, verbPhrase) => `I have a hard time ${toGerund(verbPhrase)}`,
+    preferredForm: "have a hard time + -ing",
+    preferredPattern: /\bhave a hard time\b/i,
     category: "grammar",
     explanationKo: "사람이 어떤 행동을 힘들어한다면 have a hard time + -ing를 씁니다.",
   },
   {
     pattern: /\bI was inconvenient\b/gi,
     correction: () => "I felt uncomfortable",
+    preferredForm: "felt uncomfortable",
+    preferredPattern: /\bfelt uncomfortable\b/i,
     category: "meaning",
     explanationKo: "사람의 감정은 inconvenient가 아니라 uncomfortable로 표현합니다.",
   },
   {
     pattern: /\bI recommend you to visit\b/gi,
     correction: () => "I'd recommend visiting",
+    preferredForm: "recommend visiting",
+    preferredPattern: /\brecommend visiting\b/i,
     category: "grammar",
     explanationKo: "recommend 뒤에는 보통 동명사를 써서 recommend visiting으로 말합니다.",
   },
@@ -480,6 +517,41 @@ export function applyLocalRules(text, koreanPlan) {
     });
   }
   return result;
+}
+
+function preferredForms() {
+  return [...new Set(LOCAL_RULES.map((rule) => rule.preferredForm).filter(Boolean))];
+}
+
+function normalizedWords(value) {
+  return value
+    .normalize("NFKC")
+    .toLocaleLowerCase("en-US")
+    .replace(/[\p{P}\p{S}]+/gu, " ")
+    .trim()
+    .replace(/\s+/g, " ");
+}
+
+function reversesTaughtCorrection(issue, input) {
+  for (const rule of LOCAL_RULES) {
+    if (
+      rule.preferredPattern?.test(issue.original) &&
+      !rule.preferredPattern.test(issue.corrected)
+    ) {
+      return true;
+    }
+  }
+
+  const original = normalizedWords(issue.original);
+  const corrected = normalizedWords(issue.corrected);
+  return input.appliedCorrections.some((applied) => {
+    const taught = normalizedWords(applied.to);
+    const wordCount = taught.split(/\s+/).filter(Boolean).length;
+    return wordCount >= 2 &&
+      wordCount <= 8 &&
+      original.includes(taught) &&
+      !corrected.includes(taught);
+  });
 }
 
 function coverageFor(plan) {
@@ -577,7 +649,8 @@ NON-NEGOTIABLE RULES
 11. Preserve frequency, certainty, cause, agency, reported action, and outcome exactly. "Once" must never become "used to," "usually," or a habit. When the learner only says that somebody contacted them, say only "contacted" or "reached out"; never infer what that person said, requested, complained about, or felt. Never infer sleep, anger, happiness, motivation, conflict, or any other unstated consequence.
 12. Do not add a residence type or examples of places or objects. For example, "home and neighborhood" does not authorize "apartment," "hallway," or "laundry room." A generalization may only restate the learner's own reason or conclusion; it may not introduce a new cause, result, or social benefit.
 13. In post_rewrite, analyze rewriteDraft as the submitted review source. It may be the learner's first and only draft. Do not call it a rewrite or imply that the learner already revised it.
-14. Write diagnosisKo, every explanationKo, every rewrite target, every whyKo, and nextTaskKo in Korean.
+14. Never criticize or undo a phrase listed in appliedCorrections or preferredForms. Those forms were already taught as accepted by this coach.
+15. Write diagnosisKo, every explanationKo, every rewrite target, every whyKo, and nextTaskKo in Korean.
 
 STAGE: ${stage}
 For feedback: correctedEnglish, naturalEnglish, modelAnswer, and stretchAnswer MUST be null; phraseUpgrades MUST be empty. Give only diagnosis, up to 3 issues, and rewrite targets so the learner rewrites independently.
@@ -593,6 +666,8 @@ function modelUserPayload(input) {
     koreanPlan: input.koreanPlan,
     englishDraft: input.stage === "feedback" ? input.englishDraft : null,
     rewriteDraft: input.stage === "post_rewrite" ? input.rewriteDraft : null,
+    appliedCorrections: input.stage === "post_rewrite" ? input.appliedCorrections : [],
+    preferredForms: preferredForms(),
   });
 }
 
@@ -637,6 +712,17 @@ function finalAnswerHardLocks(input) {
   }
   if (contactFacts && !EXPLICIT_CONTACT_PATTERN.test(contactFacts)) {
     locks.push("The source only says that someone contacted or reached out to the speaker. The channel, exact words, request, complaint, and reaction are unknown and must not be inferred.");
+  }
+  const acceptedForms = LOCAL_RULES
+    .filter((rule) => rule.preferredPattern?.test(input.rewriteDraft))
+    .map((rule) => rule.preferredForm);
+  for (const form of acceptedForms) {
+    locks.push(`Preserve the accepted coach form "${form}". Do not replace it with a contradictory correction.`);
+  }
+  for (const applied of input.appliedCorrections) {
+    if (normalizedWords(input.rewriteDraft).includes(normalizedWords(applied.to))) {
+      locks.push(`Preserve the already applied correction "${applied.to}".`);
+    }
   }
   return locks;
 }
@@ -1191,7 +1277,8 @@ function normalizeModelFeedback(raw, input, model) {
       issue.corrected &&
       issue.explanationKo &&
       !addsUnsupportedFacts(issue.corrected, input) &&
-      !addsForbiddenSemanticMarkers(issue.corrected, input),
+      !addsForbiddenSemanticMarkers(issue.corrected, input) &&
+      !reversesTaughtCorrection(issue, input),
     )
     .sort((a, b) => a.priority - b.priority)
     .slice(0, 3)

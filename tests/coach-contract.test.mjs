@@ -740,6 +740,73 @@ test("fact guard rejects unsupported duration and intensity without discarding c
   );
 });
 
+test("post-rewrite preserves corrections already taught by the coach", async () => {
+  const request = {
+    ...baseRequest,
+    stage: "post_rewrite",
+    englishDraft: "I had a promise with my friend. We talked at a cafe.",
+    rewriteDraft: "I had plans with my friend. We talked at a cafe.",
+    appliedCorrections: [{
+      from: "I had a promise with my friend",
+      to: "I had plans with my friend",
+    }],
+  };
+  const calls = [];
+  const result = await createCoachFeedback(request, {
+    fetchImpl: async (_url, init) => {
+      const body = JSON.parse(init.body);
+      calls.push(body);
+      return ollamaEnvelope(isFinalAnswerPass(body)
+        ? validFinalAnswers(request.rewriteDraft)
+        : validPostAnalysis({
+            issues: [{
+              priority: 1,
+              original: "I had plans with my friend",
+              corrected: "I went to a cafe with my friend",
+              category: "naturalness",
+              explanationKo: "이미 가르친 표현을 되돌리는 잘못된 제안입니다.",
+            }],
+          }));
+    },
+  });
+
+  const analysisInput = JSON.parse(calls[0].messages[1].content);
+  assert.deepEqual(analysisInput.appliedCorrections, request.appliedCorrections);
+  assert.ok(analysisInput.preferredForms.some((form) => /had plans with/i.test(form)));
+  assert.equal(result.source, "local-model");
+  assert.equal(result.issues.length, 0);
+  assert.match(result.correctedEnglish, /had plans with my friend/i);
+});
+
+test("post-rewrite also protects preferred forms when no first-stage corrections exist", async () => {
+  const request = {
+    ...baseRequest,
+    stage: "post_rewrite",
+    englishDraft: "I met my friend.",
+    rewriteDraft: "I had plans with my friend, so we met at a cafe.",
+    appliedCorrections: [],
+  };
+  const result = await createCoachFeedback(request, {
+    fetchImpl: async (_url, init) => {
+      const body = JSON.parse(init.body);
+      return ollamaEnvelope(isFinalAnswerPass(body)
+        ? validFinalAnswers(request.rewriteDraft)
+        : validPostAnalysis({
+            issues: [{
+              priority: 1,
+              original: "had plans with my friend",
+              corrected: "went to a cafe with my friend",
+              category: "naturalness",
+              explanationKo: "앱의 선호 표현을 되돌리면 안 됩니다.",
+            }],
+          }));
+    },
+  });
+
+  assert.equal(result.source, "local-model");
+  assert.deepEqual(result.issues, []);
+});
+
 test("deterministic Korean-English interference rules cover the core regression phrases", () => {
   assert.equal(applyLocalRules("I went to home."), "I went home.");
   assert.equal(applyLocalRules("My condition was bad."), "I wasn't feeling well.");
