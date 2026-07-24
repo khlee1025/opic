@@ -18,6 +18,10 @@ test("stop script validates the local service and terminates its process tree", 
   assert.match(source, /taskkill(?:\.exe)?[\s\S]*\/T[\s\S]*\/F/i);
   assert.match(source, /Stop-Process\s+-Id\s+\$serverProcessId\s+-Force/i);
   assert.match(source, /Get-Process\s+-Id\s+\$serverProcessId/i);
+  assert.match(source, /engine\\ollama/i);
+  assert.match(source, /llama-server\.exe/i);
+  assert.match(source, /ExecutablePath[\s\S]*StartsWith/i);
+  assert.match(source, /Stop-LocalAiProcesses[\s\S]*Remove-Item/i);
 });
 
 test("Windows PowerShell 5.1 checks the frontend without the legacy IE engine", async () => {

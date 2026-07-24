@@ -189,7 +189,7 @@ test("local model request is fixed to loopback, disables thinking/streaming, and
   assert.equal(calls[0].body.keep_alive, "30m");
   assert.equal(calls[0].body.format.properties.stage.enum[0], "feedback");
   assert.equal(calls[0].body.format.properties.correctedEnglish.type, "null");
-  assert.equal(calls[0].body.options.num_predict, 600);
+  assert.equal(calls[0].body.options.num_predict, 900);
   assert.equal(calls[0].body.options.num_ctx, 2048);
   const systemPrompt = calls[0].body.messages[0].content;
   assert.ok(systemPrompt.length <= Math.floor(3_519 * 0.7));
@@ -225,7 +225,7 @@ test("post-rewrite uses analysis-only then closed-book answer generation", async
   const [analysisBody, finalBody] = calls;
   assert.equal(analysisBody.format.properties.correctedEnglish.type, "null");
   assert.equal(analysisBody.format.properties.stretchAnswer.type, "null");
-  assert.equal(analysisBody.options.num_predict, 600);
+  assert.equal(analysisBody.options.num_predict, 900);
   const analysisInput = JSON.parse(analysisBody.messages[1].content);
   assert.equal(analysisInput.englishDraft, null);
   assert.equal(analysisInput.rewriteDraft, request.rewriteDraft);

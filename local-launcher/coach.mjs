@@ -889,7 +889,9 @@ async function requestLocalModel(model, input, fetchImpl, timeoutMs, externalSig
       top_p: 0.85,
       repeat_penalty: 1.05,
       num_ctx: 2048,
-      num_predict: 600,
+      // The analysis schema includes Korean explanations. The home 9B model
+      // needs more than 600 tokens to close the JSON object reliably.
+      num_predict: 900,
     },
   }, fetchImpl, timeoutMs, externalSignal);
 }

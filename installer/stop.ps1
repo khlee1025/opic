@@ -5,8 +5,28 @@ $ErrorActionPreference = "Stop"
 $runtimeRoot = Join-Path $env:LOCALAPPDATA "OPIc-Daily-Coach"
 $pidPath = Join-Path $runtimeRoot "server.pid"
 $healthUrl = "http://127.0.0.1:4273/api/health"
+$localAiRoot = [IO.Path]::GetFullPath((Join-Path $runtimeRoot "engine\ollama"))
+
+function Stop-LocalAiProcesses {
+  # A failed Ollama worker can outlive its parent on Windows. Only touch
+  # executables inside this app's dedicated engine directory.
+  $localAiPrefix = $localAiRoot.TrimEnd("\") + "\"
+  Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
+    Where-Object {
+      $_.Name -in @("ollama.exe", "llama-server.exe") -and
+      $_.ExecutablePath -and
+      [IO.Path]::GetFullPath($_.ExecutablePath).StartsWith(
+        $localAiPrefix,
+        [StringComparison]::OrdinalIgnoreCase
+      )
+    } |
+    ForEach-Object {
+      Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue
+    }
+}
 
 if (-not (Test-Path -LiteralPath $pidPath -PathType Leaf)) {
+  Stop-LocalAiProcesses
   Write-Host "실행 중인 OPIc Daily Coach 정보를 찾지 못했습니다."
   return
 }
@@ -55,5 +75,6 @@ if ($remaining) {
   throw "OPIc Daily Coach 프로세스를 종료하지 못했습니다."
 }
 
+Stop-LocalAiProcesses
 Remove-Item -LiteralPath $pidPath -Force -ErrorAction SilentlyContinue
 Write-Host "OPIc Daily Coach와 로컬 자식 프로세스를 종료했습니다."
