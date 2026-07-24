@@ -422,7 +422,7 @@ test("an external abort stops the current model request and never tries the fall
   assert.equal(calls, 1);
 });
 
-test("rejects a model answer that adds unsupported numeric facts and uses the safer fallback", async () => {
+test("isolates a model answer that adds unsupported numeric facts", async () => {
   const postRequest = {
     ...baseRequest,
     stage: "post_rewrite",
@@ -431,7 +431,6 @@ test("rejects a model answer that adds unsupported numeric facts and uses the sa
   const unsafe = validFinalAnswers(postRequest.rewriteDraft, {
     naturalEnglish: `${postRequest.rewriteDraft} We talked for 3 hours.`,
   });
-  const safe = validFinalAnswers(postRequest.rewriteDraft);
   const models = [];
 
   const result = await createCoachFeedback(postRequest, {
@@ -439,18 +438,17 @@ test("rejects a model answer that adds unsupported numeric facts and uses the sa
       const body = JSON.parse(init.body);
       const model = body.model;
       models.push(model);
-      return ollamaEnvelope(isFinalAnswerPass(body)
-        ? (model === PRIMARY_MODEL ? unsafe : safe)
-        : validPostAnalysis());
+      return ollamaEnvelope(isFinalAnswerPass(body) ? unsafe : validPostAnalysis());
     },
   });
 
-  assert.deepEqual(models, [PRIMARY_MODEL, PRIMARY_MODEL, FALLBACK_MODEL, FALLBACK_MODEL]);
-  assert.equal(result.modelUsed, FALLBACK_MODEL);
-  assert.doesNotMatch(result.naturalEnglish, /3 hours/);
+  assert.deepEqual(models, [PRIMARY_MODEL, PRIMARY_MODEL]);
+  assert.equal(result.modelUsed, PRIMARY_MODEL);
+  assert.equal(result.naturalEnglish, null);
+  assert.equal(typeof result.correctedEnglish, "string");
 });
 
-test("rejects newly invented proper place names without rejecting ordinary rewrites", async () => {
+test("isolates newly invented proper place names without rejecting ordinary fields", async () => {
   const postRequest = {
     ...baseRequest,
     stage: "post_rewrite",
@@ -459,9 +457,6 @@ test("rejects newly invented proper place names without rejecting ordinary rewri
   const unsafe = validFinalAnswers(postRequest.rewriteDraft, {
     naturalEnglish: `${postRequest.rewriteDraft} Seoul was our next stop.`,
   });
-  const safe = validFinalAnswers(postRequest.rewriteDraft, {
-    naturalEnglish: `${postRequest.rewriteDraft} We caught up and I felt happy.`,
-  });
   const models = [];
 
   const result = await createCoachFeedback(postRequest, {
@@ -469,16 +464,14 @@ test("rejects newly invented proper place names without rejecting ordinary rewri
       const body = JSON.parse(init.body);
       const model = body.model;
       models.push(model);
-      return ollamaEnvelope(isFinalAnswerPass(body)
-        ? (model === PRIMARY_MODEL ? unsafe : safe)
-        : validPostAnalysis());
+      return ollamaEnvelope(isFinalAnswerPass(body) ? unsafe : validPostAnalysis());
     },
   });
 
-  assert.deepEqual(models, [PRIMARY_MODEL, PRIMARY_MODEL, FALLBACK_MODEL, FALLBACK_MODEL]);
-  assert.equal(result.modelUsed, FALLBACK_MODEL);
-  assert.doesNotMatch(result.naturalEnglish, /Seoul/);
-  assert.match(result.naturalEnglish, /We caught up/);
+  assert.deepEqual(models, [PRIMARY_MODEL, PRIMARY_MODEL]);
+  assert.equal(result.modelUsed, PRIMARY_MODEL);
+  assert.equal(result.naturalEnglish, null);
+  assert.match(result.modelAnswer, /Here is the main point/);
 });
 
 test("post-rewrite rejects changed frequency and inferred contact actions", async () => {
@@ -497,32 +490,25 @@ test("post-rewrite rejects changed frequency and inferred contact actions", asyn
   const unsafe = validFinalAnswers(request.rewriteDraft, {
     naturalEnglish: "I used to play music late at night, and my downstairs neighbor told me to stop because they could not sleep.",
   });
-  const safe = validFinalAnswers(request.rewriteDraft);
   const calls = [];
 
   const result = await createCoachFeedback(request, {
     fetchImpl: async (_url, init) => {
       const body = JSON.parse(init.body);
       calls.push(body);
-      return ollamaEnvelope(isFinalAnswerPass(body)
-        ? (body.model === PRIMARY_MODEL ? unsafe : safe)
-        : validPostAnalysis());
+      return ollamaEnvelope(isFinalAnswerPass(body) ? unsafe : validPostAnalysis());
     },
   });
 
-  assert.deepEqual(calls.map((body) => body.model), [
-    PRIMARY_MODEL,
-    PRIMARY_MODEL,
-    FALLBACK_MODEL,
-    FALLBACK_MODEL,
-  ]);
+  assert.deepEqual(calls.map((body) => body.model), [PRIMARY_MODEL, PRIMARY_MODEL]);
   const primaryFinalInput = JSON.parse(calls[1].messages[1].content);
   assert.match(primaryFinalInput.source.hardLocks.join("\n"), /one-time event/i);
   assert.match(primaryFinalInput.source.hardLocks.join("\n"), /only says that someone contacted/i);
-  assert.equal(result.modelUsed, FALLBACK_MODEL);
+  assert.equal(result.modelUsed, PRIMARY_MODEL);
+  assert.equal(result.naturalEnglish, null);
   assert.doesNotMatch(Object.values(result).join("\n"), /used to|told me to|sleep/i);
-  assert.match(result.naturalEnglish, /once/i);
-  assert.match(result.naturalEnglish, /contacted me/i);
+  assert.match(result.correctedEnglish, /once/i);
+  assert.match(result.correctedEnglish, /contacted me/i);
 });
 
 test("post-rewrite repairs duplicate final answers with fact-neutral discourse markers", async () => {
@@ -613,6 +599,145 @@ test("post-rewrite removes unsupported intensity without discarding useful local
   assert.doesNotMatch(result.naturalEnglish, /high fever/i);
   assert.match(result.naturalEnglish, /a fever/i);
   assert.equal(result.phraseUpgrades[0].to, "a fever");
+});
+
+test("fact guard normalizes equivalent numbers and does not mistake 'the rest of' for resting", async () => {
+  const cases = [
+    {
+      rewriteDraft: "I waited for two hours before my friend arrived.",
+      naturalEnglish: "I waited for 2 hours before my friend arrived.",
+    },
+    {
+      rewriteDraft: "I spent the rest of the day at home.",
+      naturalEnglish: "For the rest of the day, I stayed at home.",
+    },
+  ];
+
+  for (const sample of cases) {
+    const request = {
+      ...baseRequest,
+      stage: "post_rewrite",
+      koreanPlan: {
+        answer: sample.rewriteDraft,
+        reason: "그것이 핵심 이유였다.",
+        example: "그날의 경험이다.",
+        closing: "그래서 기억에 남는다.",
+      },
+      englishDraft: "This was my first draft.",
+      rewriteDraft: sample.rewriteDraft,
+    };
+    const result = await createCoachFeedback(request, {
+      fetchImpl: async (_url, init) => {
+        const body = JSON.parse(init.body);
+        return ollamaEnvelope(isFinalAnswerPass(body)
+          ? validFinalAnswers(sample.rewriteDraft, {
+              naturalEnglish: sample.naturalEnglish,
+            })
+          : validPostAnalysis());
+      },
+    });
+
+    assert.equal(result.source, "local-model");
+    assert.equal(result.naturalEnglish, sample.naturalEnglish);
+  }
+});
+
+test("fact guard ignores model self-report and whitespace-normalizes issue spans", async () => {
+  const result = await createCoachFeedback(baseRequest, {
+    fetchImpl: async () => ollamaEnvelope(validModelFeedback({
+      factsPreserved: false,
+      factAdditions: ["모델의 자기신고는 신뢰하지 않는다."],
+      issues: [{
+        priority: 1,
+        original: "We  talked at a cafe",
+        corrected: "We caught up at a cafe",
+        category: "naturalness",
+        explanationKo: "연속 공백이 있어도 실제 원문 위치를 찾아야 합니다.",
+      }],
+    })),
+  });
+
+  assert.equal(result.source, "local-model");
+  assert.equal(result.issues.length, 1);
+  assert.equal(result.issues[0].original, "We talked at a cafe");
+  assert.equal(result.issues[0].corrected, "We caught up at a cafe");
+});
+
+test("fact guard isolates invented brands and calendar facts to the contaminated field", async () => {
+  const request = {
+    ...baseRequest,
+    stage: "post_rewrite",
+    rewriteDraft: "For the first time in a long time, I met my friend at a cafe.",
+  };
+  const cases = [
+    {
+      unsafeField: "naturalEnglish",
+      unsafeAnswer: `${request.rewriteDraft} Then we went to Starbucks.`,
+      forbidden: /Starbucks/i,
+    },
+    {
+      unsafeField: "modelAnswer",
+      unsafeAnswer: `${request.rewriteDraft} We met on Sunday.`,
+      forbidden: /Sunday/i,
+    },
+  ];
+
+  for (const sample of cases) {
+    const result = await createCoachFeedback(request, {
+      fetchImpl: async (_url, init) => {
+        const body = JSON.parse(init.body);
+        return ollamaEnvelope(isFinalAnswerPass(body)
+          ? validFinalAnswers(request.rewriteDraft, {
+              [sample.unsafeField]: sample.unsafeAnswer,
+            })
+          : validPostAnalysis());
+      },
+    });
+
+    assert.equal(result.source, "local-model");
+    assert.equal(result[sample.unsafeField], null);
+    assert.ok(
+      ["correctedEnglish", "naturalEnglish", "modelAnswer", "stretchAnswer"]
+        .filter((field) => field !== sample.unsafeField)
+        .some((field) => typeof result[field] === "string"),
+    );
+    assert.doesNotMatch(
+      Object.values(result).filter((value) => typeof value === "string").join("\n"),
+      sample.forbidden,
+    );
+  }
+});
+
+test("fact guard rejects unsupported duration and intensity without discarding clean fields", async () => {
+  const request = {
+    ...baseRequest,
+    stage: "post_rewrite",
+    koreanPlan: {
+      answer: "그날 비가 많이 왔다.",
+      reason: "그래서 실내에 있었다.",
+      example: "카페에서 친구와 이야기했다.",
+      closing: "그래도 좋은 시간이었다.",
+    },
+    englishDraft: "It rained a lot that day.",
+    rewriteDraft: "It rained a lot that day, so I stayed inside.",
+  };
+  const unsafe = "It was raining heavily all day, so I stayed inside.";
+  const result = await createCoachFeedback(request, {
+    fetchImpl: async (_url, init) => {
+      const body = JSON.parse(init.body);
+      return ollamaEnvelope(isFinalAnswerPass(body)
+        ? validFinalAnswers(request.rewriteDraft, { stretchAnswer: unsafe })
+        : validPostAnalysis());
+    },
+  });
+
+  assert.equal(result.source, "local-model");
+  assert.equal(result.stretchAnswer, null);
+  assert.equal(typeof result.correctedEnglish, "string");
+  assert.doesNotMatch(
+    Object.values(result).filter((value) => typeof value === "string").join("\n"),
+    /heavily all day/i,
+  );
 });
 
 test("deterministic Korean-English interference rules cover the core regression phrases", () => {

@@ -807,13 +807,60 @@ function nullableString(value) {
   return text || null;
 }
 
+const NUMBER_WORD_VALUES = new Map([
+  ["zero", "0"],
+  ["one", "1"],
+  ["two", "2"],
+  ["three", "3"],
+  ["four", "4"],
+  ["five", "5"],
+  ["six", "6"],
+  ["seven", "7"],
+  ["eight", "8"],
+  ["nine", "9"],
+  ["ten", "10"],
+  ["eleven", "11"],
+  ["twelve", "12"],
+  ["dozen", "12"],
+]);
+
+const KOREAN_NUMBER_VALUES = new Map([
+  ["한", "1"],
+  ["하나", "1"],
+  ["두", "2"],
+  ["둘", "2"],
+  ["세", "3"],
+  ["셋", "3"],
+  ["네", "4"],
+  ["넷", "4"],
+  ["다섯", "5"],
+  ["여섯", "6"],
+  ["일곱", "7"],
+  ["여덟", "8"],
+  ["아홉", "9"],
+  ["열", "10"],
+  ["열한", "11"],
+  ["열두", "12"],
+]);
+
 function numericTokens(text) {
-  return new Set((text.match(/\b\d+(?:[.,:]\d+)*\b/g) ?? []).map((token) => token.toLowerCase()));
+  const tokens = new Set(
+    (text.match(/\b\d+(?:[.,:]\d+)*\b/g) ?? [])
+      .map((token) => token.toLowerCase().replace(/,/g, "")),
+  );
+  for (const word of text.toLocaleLowerCase("en-US").match(/\b[a-z]+\b/g) ?? []) {
+    const normalized = NUMBER_WORD_VALUES.get(word);
+    if (normalized) tokens.add(normalized);
+  }
+  for (const word of text.match(/[가-힣]+/g) ?? []) {
+    const normalized = KOREAN_NUMBER_VALUES.get(word);
+    if (normalized) tokens.add(normalized);
+  }
+  return tokens;
 }
 
 function sourceText(input) {
   return [
-    input.question,
     ...Object.values(input.koreanPlan),
     input.englishDraft,
     input.rewriteDraft,
@@ -873,6 +920,27 @@ const HIGH_CONFIDENCE_PLACE_TOKENS = new Set([
   "starbucks",
 ]);
 
+const CALENDAR_TOKENS = new Set([
+  "monday",
+  "tuesday",
+  "wednesday",
+  "thursday",
+  "friday",
+  "saturday",
+  "sunday",
+  "january",
+  "february",
+  "march",
+  "april",
+  "june",
+  "july",
+  "august",
+  "september",
+  "october",
+  "november",
+  "december",
+]);
+
 function sourceWordTokens(source) {
   const allowed = new Set(
     (source.match(/[A-Za-z][A-Za-z'’-]*/g) ?? []).map((token) => token.toLowerCase()),
@@ -911,9 +979,74 @@ function addsUnsupportedProperNames(candidate, input) {
   return [...candidateProperNameTokens(candidate)].some((token) => !allowed.has(token));
 }
 
+const CONTENT_WORD_STOPLIST = new Set([
+  "about", "actually", "after", "again", "also", "and", "another", "around",
+  "because", "before", "broadly", "but", "could", "explain", "first", "for",
+  "from", "here", "however", "into", "just", "looking", "main", "more", "most",
+  "overall", "point", "really", "simply", "since", "still", "that", "the",
+  "their", "them", "then", "there", "these", "they", "this", "those", "through",
+  "very", "was", "were", "what", "when", "where", "which", "while", "with",
+  "would", "your",
+]);
+
+function contentStem(token) {
+  let value = token.toLocaleLowerCase("en-US").replace(/[^a-z']/g, "");
+  if (value.length > 5 && value.endsWith("ing")) value = value.slice(0, -3);
+  else if (value.length > 4 && value.endsWith("ied")) value = `${value.slice(0, -3)}y`;
+  else if (value.length > 4 && value.endsWith("ed")) value = value.slice(0, -2);
+  else if (value.length > 4 && value.endsWith("ly")) {
+    value = value.slice(0, -2);
+    if (value.endsWith("i")) value = `${value.slice(0, -1)}y`;
+  }
+  else if (value.length > 4 && value.endsWith("s")) value = value.slice(0, -1);
+  return value;
+}
+
+function contentWords(text) {
+  return (text.match(/\b[A-Za-z][A-Za-z'’-]*\b/g) ?? [])
+    .map(contentStem)
+    .filter((token) => token.length >= 3 && !CONTENT_WORD_STOPLIST.has(token));
+}
+
+function unsupportedContentWords(candidate, input) {
+  const allowed = new Set(contentWords(sourceText(input)));
+  return contentWords(candidate).filter((token) => !allowed.has(token));
+}
+
+function addsUnsupportedContent(candidate, input) {
+  const source = sourceText(input);
+  const sourceTokens = sourceWordTokens(source);
+  const candidateTokens = sourceWordTokens(candidate);
+
+  const addsCalendarFact = [...candidateTokens].some((token) =>
+    CALENDAR_TOKENS.has(token) && !sourceTokens.has(token));
+  if (addsCalendarFact) return true;
+
+  if (
+    /\ball\s+(?:day|night|week|month|year)\b/iu.test(candidate) &&
+    !/\ball\s+(?:day|night|week|month|year)\b|(?:하루|밤새|일주일|한\s*달|일\s*년)\s*(?:내내|종일)/iu.test(source)
+  ) {
+    return true;
+  }
+
+  const unsupported = new Set(unsupportedContentWords(candidate, input));
+  const unsupportedIntensity = [
+    "absolute",
+    "complete",
+    "constant",
+    "enormous",
+    "extreme",
+    "heavy",
+    "severe",
+    "total",
+  ].some((stem) => unsupported.has(stem));
+  return unsupportedIntensity;
+}
+
 function addsUnsupportedFacts(candidate, input) {
   return addsUnsupportedNumbers(candidate, input) ||
-    addsUnsupportedProperNames(candidate, input);
+    addsUnsupportedProperNames(candidate, input) ||
+    addsUnsupportedContent(candidate, input);
 }
 
 const HABIT_MARKER_PATTERN = /\b(?:used\s+to|usually|often|frequently|regularly|always|every\s+(?:day|night|week|month|year)|on\s+a\s+regular\s+basis)\b/iu;
@@ -922,8 +1055,8 @@ const SPECIFIC_CONTACT_ACTION_PATTERN = /\b(?:called|phoned|texted|messaged|emai
 
 const INFERENCE_MARKER_GROUPS = [
   {
-    candidate: /\b(?:sleep|slept|asleep|wake|woke|rest(?:ed|ing)?)\b/iu,
-    source: /\b(?:sleep|slept|asleep|wake|woke|rest(?:ed|ing)?)\b|(?:잠|수면|잤|자다|쉬었|휴식)/iu,
+    candidate: /\b(?:sleep|slept|asleep|wake|woke|rested|resting)\b|\b(?:get|got|getting|take|took|taking|have|had|having)\s+(?:some\s+|a\s+)?rest\b/iu,
+    source: /\b(?:sleep|slept|asleep|wake|woke|rested|resting)\b|\b(?:get|got|getting|take|took|taking|have|had|having)\s+(?:some\s+|a\s+)?rest\b|(?:잠|수면|잤|자다|쉬었|휴식)/iu,
   },
   {
     candidate: /\b(?:happy|glad|angry|upset|annoyed|sad|excited)\b/iu,
@@ -984,6 +1117,7 @@ function ensureDistinctFinalAnswers(fields) {
     "stretchAnswer",
   ]) {
     let value = result[field];
+    if (!value) continue;
     let key = comparableAnswerKey(value);
     if (seen.has(key)) {
       value = `${prefixes[field] ?? "In other words, "}${value}`;
@@ -994,6 +1128,17 @@ function ensureDistinctFinalAnswers(fields) {
     seen.add(key);
   }
   return result;
+}
+
+function escapeRegex(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function findWhitespaceNormalizedSpan(source, claimedSpan) {
+  const parts = claimedSpan.trim().split(/\s+/).filter(Boolean);
+  if (!parts.length) return "";
+  const matcher = new RegExp(parts.map(escapeRegex).join("\\s+"), "iu");
+  return source.match(matcher)?.[0] ?? "";
 }
 
 function sanitizeUnsupportedElaboration(value, input) {
@@ -1011,29 +1156,40 @@ function sanitizeUnsupportedElaboration(value, input) {
   return result;
 }
 
+function isolateGeneratedAnswer(value, input) {
+  const sanitized = sanitizeUnsupportedElaboration(nullableString(value), input);
+  if (!sanitized) return null;
+  if (
+    addsUnsupportedFacts(sanitized, input) ||
+    addsForbiddenSemanticMarkers(sanitized, input)
+  ) {
+    return null;
+  }
+  return sanitized;
+}
+
 function normalizeModelFeedback(raw, input, model) {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
     throw new LocalModelError("MODEL_CONTRACT_ERROR");
-  }
-  if (raw.factsPreserved !== true || !Array.isArray(raw.factAdditions) || raw.factAdditions.length > 0) {
-    throw new LocalModelError("MODEL_FACT_GUARD");
   }
 
   const sourceDraft = input.stage === "post_rewrite" ? input.rewriteDraft : input.englishDraft;
   const rawIssues = Array.isArray(raw.issues) ? raw.issues : [];
   const issues = rawIssues
-    .map((issue, index) => ({
-      priority: Number.isInteger(issue?.priority) ? issue.priority : index + 1,
-      original: safeString(issue?.original, 500),
-      corrected: sanitizeUnsupportedElaboration(safeString(issue?.corrected, 500), input),
-      category: CATEGORY_VALUES.has(issue?.category) ? issue.category : "naturalness",
-      explanationKo: safeKoreanString(issue?.explanationKo, 500),
-    }))
+    .map((issue, index) => {
+      const claimedOriginal = safeString(issue?.original, 500);
+      return {
+        priority: Number.isInteger(issue?.priority) ? issue.priority : index + 1,
+        original: findWhitespaceNormalizedSpan(sourceDraft, claimedOriginal),
+        corrected: sanitizeUnsupportedElaboration(safeString(issue?.corrected, 500), input),
+        category: CATEGORY_VALUES.has(issue?.category) ? issue.category : "naturalness",
+        explanationKo: safeKoreanString(issue?.explanationKo, 500),
+      };
+    })
     .filter((issue) =>
       issue.original &&
       issue.corrected &&
       issue.explanationKo &&
-      sourceDraft.toLowerCase().includes(issue.original.toLowerCase()) &&
       !addsUnsupportedFacts(issue.corrected, input) &&
       !addsForbiddenSemanticMarkers(issue.corrected, input),
     )
@@ -1061,10 +1217,10 @@ function normalizeModelFeedback(raw, input, model) {
   const isPostRewrite = input.stage === "post_rewrite";
   let revealFields = isPostRewrite
     ? {
-        correctedEnglish: sanitizeUnsupportedElaboration(nullableString(raw.correctedEnglish), input),
-        naturalEnglish: sanitizeUnsupportedElaboration(nullableString(raw.naturalEnglish), input),
-        modelAnswer: sanitizeUnsupportedElaboration(nullableString(raw.modelAnswer), input),
-        stretchAnswer: sanitizeUnsupportedElaboration(nullableString(raw.stretchAnswer), input),
+        correctedEnglish: isolateGeneratedAnswer(raw.correctedEnglish, input),
+        naturalEnglish: isolateGeneratedAnswer(raw.naturalEnglish, input),
+        modelAnswer: isolateGeneratedAnswer(raw.modelAnswer, input),
+        stretchAnswer: isolateGeneratedAnswer(raw.stretchAnswer, input),
       }
     : {
         correctedEnglish: null,
@@ -1073,18 +1229,11 @@ function normalizeModelFeedback(raw, input, model) {
         stretchAnswer: null,
       };
 
-  if (isPostRewrite && Object.values(revealFields).some((value) => !value)) {
-    throw new LocalModelError("MODEL_CONTRACT_ERROR");
-  }
   if (isPostRewrite) {
-    revealFields = ensureDistinctFinalAnswers(revealFields);
-    const revealed = Object.values(revealFields).join("\n");
-    if (
-      addsUnsupportedFacts(revealed, input) ||
-      addsForbiddenSemanticMarkers(revealed, input)
-    ) {
-      throw new LocalModelError("MODEL_FACT_GUARD");
+    if (Object.values(revealFields).every((value) => !value)) {
+      throw new LocalModelError("MODEL_CONTRACT_ERROR");
     }
+    revealFields = ensureDistinctFinalAnswers(revealFields);
   }
 
   const phraseUpgrades = isPostRewrite && Array.isArray(raw.phraseUpgrades)
