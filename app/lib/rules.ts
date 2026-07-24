@@ -73,9 +73,15 @@ function lodgingContext(context: string, koreanPlan?: KoreanPlan): boolean {
 function gerund(verb: string): string {
   const lower = verb.toLowerCase();
   const doubled: Record<string, string> = {
+    admit: "admitting",
+    begin: "beginning",
+    forget: "forgetting",
     get: "getting",
     plan: "planning",
+    prefer: "preferring",
+    put: "putting",
     run: "running",
+    shop: "shopping",
     sit: "sitting",
     stop: "stopping",
     swim: "swimming",
@@ -99,6 +105,63 @@ const RULES: RuleDefinition[] = [
         draft,
         /\bhad a promise with (?:my|a|an|the|our) friends?\b/gi,
         (match) => match[0].replace(/^had a promise with/i, "had plans with"),
+      ),
+  },
+  {
+    id: "work-out-not-play-exercise",
+    category: "grammar",
+    priority: 1,
+    explanationKo:
+      "exercise는 play와 함께 쓰지 않고, 구어에서는 work out이 자연스럽습니다.",
+    find: (draft) =>
+      matchesFromRegex(
+        draft,
+        /\b(play|played|playing) exercise\b/gi,
+        (match) =>
+          match[1].toLowerCase() === "played"
+            ? "worked out"
+            : match[1].toLowerCase() === "playing"
+              ? "working out"
+              : "work out",
+      ),
+  },
+  {
+    id: "relieve-stress",
+    category: "naturalness",
+    priority: 3,
+    explanationKo:
+      "스트레스를 푼다는 뜻에는 release보다 relieve가 자연스럽습니다.",
+    find: (draft) =>
+      matchesFromRegex(
+        draft,
+        /\brelease my stress\b/gi,
+        () => "relieve my stress",
+      ),
+  },
+  {
+    id: "stay-healthy",
+    category: "naturalness",
+    priority: 3,
+    explanationKo:
+      "건강을 유지한다는 뜻은 회화에서 stay healthy가 자연스럽습니다.",
+    find: (draft) =>
+      matchesFromRegex(
+        draft,
+        /\bkeep my health\b/gi,
+        () => "stay healthy",
+      ),
+  },
+  {
+    id: "place-to-recharge",
+    category: "naturalness",
+    priority: 3,
+    explanationKo:
+      "마음을 충전하는 장소는 charging place보다 place to recharge로 표현합니다.",
+    find: (draft) =>
+      matchesFromRegex(
+        draft,
+        /\bIt is my best charging place\b/gi,
+        () => "It is the best place for me to recharge",
       ),
   },
   {

@@ -33,6 +33,13 @@ const regressionCases = [
     corrected: "I had plans with my friend.",
   },
   {
+    name: "exercise uses work out instead of play",
+    draft: "We played exercise for one hour.",
+    original: "played exercise",
+    suggestion: "worked out",
+    corrected: "We worked out for one hour.",
+  },
+  {
     name: "adult social time uses hang out",
     draft: "I play with my friends at a cafe.",
     original: "play with my friends",
@@ -113,6 +120,20 @@ for (const regression of regressionCases) {
     assert.ok((issues[0].explanationKo.match(/[.!?。]/g) ?? []).length <= 2);
   });
 }
+
+test("gerund spelling doubles final consonants for high-risk verbs", () => {
+  for (const [verb, expected] of [
+    ["forget", "I'd recommend forgetting"],
+    ["plan", "I'd recommend planning"],
+    ["begin", "I'd recommend beginning"],
+    ["stop", "I'd recommend stopping"],
+    ["put", "I'd recommend putting"],
+    ["shop", "I'd recommend shopping"],
+  ]) {
+    const issues = detectRuleIssues(`I recommend you to ${verb}.`);
+    assert.equal(issues[0]?.suggestion, expected);
+  }
+});
 
 test("does not confuse playing with children with adult socializing", () => {
   assert.deepEqual(detectRuleIssues("I play with my children every evening."), []);

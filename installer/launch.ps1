@@ -1,4 +1,4 @@
-param(
+﻿param(
   [switch]$UseSource
 )
 
@@ -125,14 +125,17 @@ try {
     }
 
     try {
-      $page = Invoke-WebRequest -Uri $appUrl -Method Get -TimeoutSec 2
+      $page = Invoke-WebRequest -Uri $appUrl -Method Get -UseBasicParsing -TimeoutSec 2
       $frontendReady = $page.StatusCode -eq 200 -and $page.Content -match "OPIc Daily Coach"
     } catch {
       $frontendReady = $false
     }
 
-    if ($frontendReady -and $health.mode -eq "local-model") {
+    if ($frontendReady) {
       Open-Coach
+      if ($health.mode -eq "warming") {
+        Show-LauncherMessage "앱은 열렸고 로컬 AI를 준비 중입니다. 상단 상태가 '준비됨'으로 바뀐 뒤 심층 피드백을 사용하세요."
+      }
       return
     }
   }

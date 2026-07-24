@@ -10,6 +10,7 @@ import {
   type KoreanPlan,
   type PracticeStage,
   type QuestionAttempt,
+  type RubricScore,
 } from "./types.ts";
 
 export const COACH_STORAGE_KEY = "opic-daily-coach.state.v1";
@@ -142,6 +143,41 @@ function cleanCoverage(value: unknown): IntentCoverage {
   };
 }
 
+function cleanScore(value: unknown): RubricScore | undefined {
+  if (!isRecord(value) || !["IM2", "IH", "AL"].includes(String(value.band))) {
+    return undefined;
+  }
+  const subScores = isRecord(value.subScores) ? value.subScores : {};
+  const metrics = isRecord(value.metrics) ? value.metrics : {};
+  const number = (candidate: unknown, maximum = 100) => Math.min(
+    maximum,
+    Math.max(0, Number.isFinite(Number(candidate)) ? Number(candidate) : 0),
+  );
+  return {
+    band: value.band as RubricScore["band"],
+    totalScore: number(value.totalScore),
+    targetLevel: value.targetLevel === "IH" ? "IH" : "AL",
+    subScores: {
+      coverage: number(subScores.coverage),
+      structure: number(subScores.structure),
+      complexity: number(subScores.complexity),
+      tenseControl: number(subScores.tenseControl),
+      vocabulary: number(subScores.vocabulary),
+      accuracy: number(subScores.accuracy),
+    },
+    metrics: {
+      coverageCount: number(metrics.coverageCount, 4),
+      sentenceCount: number(metrics.sentenceCount),
+      subordinateClauseCount: number(metrics.subordinateClauseCount),
+      connectorDiversity: number(metrics.connectorDiversity),
+      tenseDiversity: number(metrics.tenseDiversity, 4),
+      typeTokenRatio: number(metrics.typeTokenRatio, 1),
+      localRuleViolationCount: number(metrics.localRuleViolationCount),
+    },
+    gapToTarget: cleanStringArray(value.gapToTarget, 2),
+  };
+}
+
 function cleanFeedback(value: unknown): CoachFeedback | undefined {
   if (!isRecord(value)) return undefined;
   const issues = Array.isArray(value.issues)
@@ -160,6 +196,7 @@ function cleanFeedback(value: unknown): CoachFeedback | undefined {
           whyKo: cleanString(upgrade.whyKo),
         }))
     : undefined;
+  const score = cleanScore(value.score);
 
   return {
     source: value.source === "local-model" ? "local-model" : "rules-only",
@@ -187,6 +224,7 @@ function cleanFeedback(value: unknown): CoachFeedback | undefined {
     ...(typeof value.nextTaskKo === "string"
       ? { nextTaskKo: cleanString(value.nextTaskKo) }
       : {}),
+    ...(score ? { score } : {}),
   };
 }
 

@@ -65,7 +65,13 @@ test("starter preview is fully removed and the learning flow is present", async 
   ]);
 
   assert.match(page, /한국어로 생각 정리하기/);
-  assert.match(page, /재작성 제출하고 해설 보기/);
+  assert.match(page, /aria-label="연습 질문"/);
+  assert.match(page, /> 이전 단계</);
+  assert.match(page, /getPreviousPracticeStage/);
+  assert.match(page, /빨간펜 첨삭 결과 보기/);
+  assert.match(page, /내 원문 · 빨간펜 첨삭/);
+  assert.match(page, /선택 연습 · 내가 직접 다시 써보기/);
+  assert.doesNotMatch(page, /재작성 제출하고 해설 보기/);
   assert.match(page, /답안 가리고 시작/);
   assert.match(page, /\/api\/coach/);
   assert.match(page, /getQuestionPairForDate/);

@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { createReadStream } from "node:fs";
 import { access, mkdir, stat } from "node:fs/promises";
 import http from "node:http";
@@ -10,6 +10,7 @@ import { APP_VERSION } from "./version.mjs";
 import {
   CoachInputError,
   OLLAMA_BASE_URL,
+  PRIMARY_MODEL,
   checkOllamaHealth,
   createCoachFeedback,
 } from "./coach.mjs";
@@ -19,6 +20,25 @@ export const DEFAULT_PORT = 4273;
 export const DEFAULT_FRONTEND_PORT = 4272;
 const MAX_BODY_BYTES = 64 * 1024;
 const PROJECT_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+
+export async function terminateProcessTree(child, options = {}) {
+  if (!child || child.exitCode !== null || !Number.isInteger(child.pid)) return;
+  const platform = options.platform ?? process.platform;
+  if (platform !== "win32") {
+    child.kill();
+    return;
+  }
+
+  const execFileImpl = options.execFileImpl ?? execFile;
+  await new Promise((resolve) => {
+    execFileImpl(
+      "taskkill.exe",
+      ["/PID", String(child.pid), "/T", "/F"],
+      { windowsHide: true },
+      () => resolve(),
+    );
+  });
+}
 
 function parsePort(value, fallback) {
   const port = Number.parseInt(String(value ?? ""), 10);
@@ -231,6 +251,7 @@ export function createCoachServer(options = {}) {
     options.frontendPort ?? DEFAULT_FRONTEND_PORT,
   );
   const logger = options.logger ?? console;
+  const warmupState = options.warmupState ?? { status: "idle" };
 
   return http.createServer(async (request, response) => {
     const origin = requestOrigin(request);
@@ -259,16 +280,22 @@ export function createCoachServer(options = {}) {
         fetchImpl,
         timeoutMs: options.healthTimeoutMs,
       });
+      const modelAvailable = ollama.primaryAvailable || ollama.fallbackAvailable;
+      const mode = warmupState.status === "warming"
+        ? "warming"
+        : warmupState.status === "failed"
+          ? "rules-only"
+          : modelAvailable
+            ? "local-model"
+            : "rules-only";
       sendJson(response, 200, {
         ok: true,
         service: "opic-daily-coach",
         version: APP_VERSION,
         privacy: "local-only",
         boundHost: LOCAL_HOST,
-        coachReady: true,
-        mode: ollama.primaryAvailable || ollama.fallbackAvailable
-          ? "local-model"
-          : "rules-only",
+        coachReady: mode !== "warming",
+        mode,
         ollama: {
           endpoint: OLLAMA_BASE_URL,
           ...ollama,
@@ -298,10 +325,21 @@ export function createCoachServer(options = {}) {
       try {
         const payload = await readJsonBody(request);
         if (clientAbortController.signal.aborted) return;
+        const modelHealth = await checkOllamaHealth({
+          fetchImpl,
+          timeoutMs: options.healthTimeoutMs,
+        });
+        const availableModels = warmupState.status === "warming"
+          ? []
+          : [
+              ...(modelHealth.primaryAvailable ? [modelHealth.primaryModel] : []),
+              ...(modelHealth.fallbackAvailable ? [modelHealth.fallbackModel] : []),
+            ];
         const feedback = await createCoachFeedback(payload, {
           fetchImpl,
           timeoutMs: options.modelTimeoutMs,
           signal: clientAbortController.signal,
+          availableModels,
         });
         if (clientAbortController.signal.aborted || response.destroyed) return;
         sendJson(response, 200, { ok: true, ...feedback }, origin);
@@ -400,7 +438,7 @@ export async function launchLocalModelEngine(options = {}) {
       OLLAMA_HOST: "127.0.0.1:11435",
       OLLAMA_MODELS: modelsPath,
       OLLAMA_NO_CLOUD: "1",
-      OLLAMA_CONTEXT_LENGTH: "4096",
+      OLLAMA_CONTEXT_LENGTH: "2048",
       OLLAMA_FLASH_ATTENTION: "1",
       OLLAMA_KV_CACHE_TYPE: "q8_0",
       OLLAMA_KEEP_ALIVE: "10m",
@@ -409,6 +447,53 @@ export async function launchLocalModelEngine(options = {}) {
     stdio: "ignore",
     windowsHide: true,
   });
+}
+
+export async function warmLocalModel(options = {}) {
+  const fetchImpl = options.fetchImpl ?? globalThis.fetch;
+  const waitTimeoutMs = options.waitTimeoutMs ?? 60_000;
+  const requestTimeoutMs = options.requestTimeoutMs ?? 130_000;
+  const deadline = Date.now() + waitTimeoutMs;
+
+  do {
+    const health = await checkOllamaHealth({
+      fetchImpl,
+      timeoutMs: Math.min(1_500, waitTimeoutMs),
+    });
+    if (health.primaryAvailable) break;
+    if (Date.now() >= deadline) return false;
+    await new Promise((resolve) => setTimeout(resolve, 500));
+  } while (true);
+
+  try {
+    const response = await fetchImpl(`${OLLAMA_BASE_URL}/api/chat`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      signal: AbortSignal.timeout(requestTimeoutMs),
+      body: JSON.stringify({
+        model: PRIMARY_MODEL,
+        messages: [{
+          role: "user",
+          content: "Reply with only the word ready.",
+        }],
+        stream: false,
+        think: false,
+        keep_alive: "30m",
+        options: {
+          temperature: 0,
+          num_ctx: 2048,
+          num_predict: 8,
+        },
+      }),
+    });
+    if (!response?.ok) return false;
+    // Ollama can send response headers before the model has finished loading.
+    // Consume the fixed synthetic response fully before reporting "ready".
+    await response.text();
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 export async function launchProductionFrontend(options = {}) {
@@ -445,7 +530,12 @@ export async function startCoachServer(options = {}) {
     DEFAULT_FRONTEND_PORT,
   );
   const frontendUrl = localFrontendUrl(options.frontendUrl, frontendPort);
-  const server = createCoachServer({ ...options, frontendUrl: frontendUrl.href });
+  const warmupState = { status: "idle" };
+  const server = createCoachServer({
+    ...options,
+    frontendUrl: frontendUrl.href,
+    warmupState,
+  });
 
   // Acquire the public wrapper port before spawning helpers. A double-click or
   // port conflict then fails without leaving orphan frontend/model processes.
@@ -469,11 +559,22 @@ export async function startCoachServer(options = {}) {
     throw error;
   }
 
+  let warmupPromise = null;
+  if (options.spawnOllama !== false && options.warmModel !== false) {
+    warmupState.status = "warming";
+    warmupPromise = warmLocalModel(options).then((ready) => {
+      warmupState.status = ready ? "ready" : "failed";
+      return ready;
+    });
+  }
+
   const address = server.address();
   const actualPort = typeof address === "object" && address ? address.port : port;
   const close = async () => {
-    frontendProcess?.kill();
-    ollamaProcess?.kill();
+    await Promise.all([
+      terminateProcessTree(frontendProcess),
+      terminateProcessTree(ollamaProcess),
+    ]);
     if (!server.listening) return;
     await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
   };
@@ -482,6 +583,7 @@ export async function startCoachServer(options = {}) {
     server,
     frontendProcess,
     ollamaProcess,
+    warmupPromise,
     url: `http://${LOCAL_HOST}:${actualPort}`,
     close,
   };

@@ -82,11 +82,8 @@ for (const sample of samples) {
     seconds: Number(((performance.now() - started) / 1_000).toFixed(2)),
     source: result.source,
     model: result.modelUsed,
-    issues: result.issues.map(({ original, corrected, suggestion, category }) => ({
-      original,
-      corrected: corrected ?? suggestion,
-      category,
-    })),
+    fallbackReason: result.fallbackReason,
+    issueCount: result.issues.length,
     factsPreserved: result.factsPreserved,
   }));
 }
@@ -102,14 +99,27 @@ const finalResult = await createCoachFeedback({
   rewriteDraft: "I work out at a gym near my home. It helps me relieve stress from work and stay healthy. Last Friday, I had plans with my friend, and we worked out for an hour. It is the best place for me to recharge.",
 }, { timeoutMs: 180_000 });
 
+const finalFields = [
+  "correctedEnglish",
+  "naturalEnglish",
+  "modelAnswer",
+  "stretchAnswer",
+];
+const presentFinalFields = finalFields.filter((field) =>
+  typeof finalResult[field] === "string" && finalResult[field].trim());
+const generatedText = presentFinalFields.map((field) => finalResult[field]).join("\n");
+
 console.log(JSON.stringify({
   name: "post-rewrite",
   seconds: Number(((performance.now() - finalStarted) / 1_000).toFixed(2)),
   source: finalResult.source,
   model: finalResult.modelUsed,
-  correctedEnglish: finalResult.correctedEnglish,
-  naturalEnglish: finalResult.naturalEnglish,
-  modelAnswer: finalResult.modelAnswer,
-  stretchAnswer: finalResult.stretchAnswer,
+  fallbackReason: finalResult.fallbackReason,
+  answerCount: presentFinalFields.length,
+  nullFields: finalFields.filter((field) => !presentFinalFields.includes(field)),
+  malformedTransition:
+    /\b(?:because It|While We|although It|when We|since It)\b/.test(generatedText) ||
+    /\b(?:although|because|since|while|when)\b[^.!?]{0,100},\s*so\b/i.test(generatedText),
+  coverage: finalResult.score?.metrics?.coverage,
   factsPreserved: finalResult.factsPreserved,
 }));
