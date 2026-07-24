@@ -882,6 +882,7 @@ async function requestLocalModel(model, input, fetchImpl, timeoutMs, externalSig
     ],
     stream: false,
     think: false,
+    keep_alive: "30m",
     format: responseSchemaForStage(input.stage),
     options: {
       temperature: 0,
@@ -917,6 +918,7 @@ async function requestFinalAnswerModel(
     ],
     stream: false,
     think: false,
+    keep_alive: "30m",
     format: FINAL_ANSWER_RESPONSE_SCHEMA,
     options: {
       temperature: 0,

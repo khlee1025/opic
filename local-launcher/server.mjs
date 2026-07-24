@@ -10,6 +10,7 @@ import { APP_VERSION } from "./version.mjs";
 import {
   CoachInputError,
   OLLAMA_BASE_URL,
+  PRIMARY_MODEL,
   checkOllamaHealth,
   createCoachFeedback,
 } from "./coach.mjs";
@@ -250,6 +251,7 @@ export function createCoachServer(options = {}) {
     options.frontendPort ?? DEFAULT_FRONTEND_PORT,
   );
   const logger = options.logger ?? console;
+  const warmupState = options.warmupState ?? { status: "idle" };
 
   return http.createServer(async (request, response) => {
     const origin = requestOrigin(request);
@@ -278,16 +280,20 @@ export function createCoachServer(options = {}) {
         fetchImpl,
         timeoutMs: options.healthTimeoutMs,
       });
+      const modelAvailable = ollama.primaryAvailable || ollama.fallbackAvailable;
+      const mode = warmupState.status === "warming"
+        ? "warming"
+        : modelAvailable
+          ? "local-model"
+          : "rules-only";
       sendJson(response, 200, {
         ok: true,
         service: "opic-daily-coach",
         version: APP_VERSION,
         privacy: "local-only",
         boundHost: LOCAL_HOST,
-        coachReady: true,
-        mode: ollama.primaryAvailable || ollama.fallbackAvailable
-          ? "local-model"
-          : "rules-only",
+        coachReady: mode !== "warming",
+        mode,
         ollama: {
           endpoint: OLLAMA_BASE_URL,
           ...ollama,
@@ -321,10 +327,12 @@ export function createCoachServer(options = {}) {
           fetchImpl,
           timeoutMs: options.healthTimeoutMs,
         });
-        const availableModels = [
-          ...(modelHealth.primaryAvailable ? [modelHealth.primaryModel] : []),
-          ...(modelHealth.fallbackAvailable ? [modelHealth.fallbackModel] : []),
-        ];
+        const availableModels = warmupState.status === "warming"
+          ? []
+          : [
+              ...(modelHealth.primaryAvailable ? [modelHealth.primaryModel] : []),
+              ...(modelHealth.fallbackAvailable ? [modelHealth.fallbackModel] : []),
+            ];
         const feedback = await createCoachFeedback(payload, {
           fetchImpl,
           timeoutMs: options.modelTimeoutMs,
@@ -439,6 +447,49 @@ export async function launchLocalModelEngine(options = {}) {
   });
 }
 
+export async function warmLocalModel(options = {}) {
+  const fetchImpl = options.fetchImpl ?? globalThis.fetch;
+  const waitTimeoutMs = options.waitTimeoutMs ?? 20_000;
+  const requestTimeoutMs = options.requestTimeoutMs ?? 130_000;
+  const deadline = Date.now() + waitTimeoutMs;
+
+  do {
+    const health = await checkOllamaHealth({
+      fetchImpl,
+      timeoutMs: Math.min(1_500, waitTimeoutMs),
+    });
+    if (health.primaryAvailable) break;
+    if (Date.now() >= deadline) return false;
+    await new Promise((resolve) => setTimeout(resolve, 500));
+  } while (true);
+
+  try {
+    const response = await fetchImpl(`${OLLAMA_BASE_URL}/api/chat`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      signal: AbortSignal.timeout(requestTimeoutMs),
+      body: JSON.stringify({
+        model: PRIMARY_MODEL,
+        messages: [{
+          role: "user",
+          content: "Reply with only the word ready.",
+        }],
+        stream: false,
+        think: false,
+        keep_alive: "30m",
+        options: {
+          temperature: 0,
+          num_ctx: 512,
+          num_predict: 8,
+        },
+      }),
+    });
+    return Boolean(response?.ok);
+  } catch {
+    return false;
+  }
+}
+
 export async function launchProductionFrontend(options = {}) {
   const frontendPort = parsePort(options.port, DEFAULT_FRONTEND_PORT);
   const standaloneEntry = path.join(PROJECT_ROOT, "server.js");
@@ -473,7 +524,12 @@ export async function startCoachServer(options = {}) {
     DEFAULT_FRONTEND_PORT,
   );
   const frontendUrl = localFrontendUrl(options.frontendUrl, frontendPort);
-  const server = createCoachServer({ ...options, frontendUrl: frontendUrl.href });
+  const warmupState = { status: "idle" };
+  const server = createCoachServer({
+    ...options,
+    frontendUrl: frontendUrl.href,
+    warmupState,
+  });
 
   // Acquire the public wrapper port before spawning helpers. A double-click or
   // port conflict then fails without leaving orphan frontend/model processes.
@@ -497,6 +553,15 @@ export async function startCoachServer(options = {}) {
     throw error;
   }
 
+  let warmupPromise = null;
+  if (options.spawnOllama !== false && options.warmModel !== false) {
+    warmupState.status = "warming";
+    warmupPromise = warmLocalModel(options).then((ready) => {
+      warmupState.status = ready ? "ready" : "failed";
+      return ready;
+    });
+  }
+
   const address = server.address();
   const actualPort = typeof address === "object" && address ? address.port : port;
   const close = async () => {
@@ -512,6 +577,7 @@ export async function startCoachServer(options = {}) {
     server,
     frontendProcess,
     ollamaProcess,
+    warmupPromise,
     url: `http://${LOCAL_HOST}:${actualPort}`,
     close,
   };

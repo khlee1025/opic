@@ -51,7 +51,7 @@ import type {
 } from "./lib/types";
 
 type Screen = "home" | "practice" | "records" | "settings";
-type CoachMode = "checking" | "local-model" | "rules-only";
+type CoachMode = "checking" | "warming" | "local-model" | "rules-only";
 type SaveStatus = "saving" | "saved" | "error";
 
 interface CoachApiFeedback extends CoachFeedback {
@@ -447,7 +447,7 @@ function Topbar({ coachMode }: { coachMode: CoachMode }) {
     <header className="topbar">
       <span className="date-line">{formatKoreanDate()}</span>
       <div className="status-cluster">
-        <span className={`local-status ${coachMode === "rules-only" ? "waiting" : ""}`}><span className="status-dot" />{coachMode === "checking" ? "로컬 엔진 확인 중" : coachMode === "local-model" ? "로컬 AI 준비됨" : "기본 교정 사용 중 · AI 준비 대기"}</span>
+        <span className={`local-status ${coachMode === "rules-only" || coachMode === "warming" ? "waiting" : ""}`}><span className="status-dot" />{coachMode === "checking" ? "로컬 엔진 확인 중" : coachMode === "warming" ? "로컬 AI 준비 중 · 기본 교정 사용 가능" : coachMode === "local-model" ? "로컬 AI 준비됨" : "기본 교정 사용 중 · AI 준비 대기"}</span>
       </div>
     </header>
   );
@@ -1011,8 +1011,13 @@ export default function Home() {
         const response = await fetch("/api/health", { cache: "no-store", signal: activeController.signal });
         if (!response.ok) throw new Error("health unavailable");
         const health = await response.json() as { mode?: string };
-        ready = health.mode === "local-model";
-        setCoachMode(ready ? "local-model" : "rules-only");
+        const nextMode: CoachMode = health.mode === "local-model"
+          ? "local-model"
+          : health.mode === "warming"
+            ? "warming"
+            : "rules-only";
+        ready = nextMode === "local-model";
+        setCoachMode(nextMode);
       } catch {
         setCoachMode("rules-only");
       } finally {
