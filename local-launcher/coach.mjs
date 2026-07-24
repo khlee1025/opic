@@ -1201,6 +1201,10 @@ const INFERENCE_MARKER_GROUPS = [
     candidate: /\b(?:apartment|hallways?|laundry\s+rooms?|gardens?|lobb(?:y|ies)|elevators?)\b/iu,
     source: /\b(?:apartment|hallways?|laundry\s+rooms?|gardens?|lobb(?:y|ies)|elevators?)\b|(?:아파트|복도|세탁실|정원|로비|엘리베이터)/iu,
   },
+  {
+    candidate: /\b(?:go(?:ing)?|went|head(?:ed|ing)?|return(?:ed|ing)?)\s+home\b/iu,
+    source: /\b(?:go(?:ing)?|went|head(?:ed|ing)?|return(?:ed|ing)?)\s+home\b|(?:집에\s*(?:갔|가|돌아|왔)|귀가)/iu,
+  },
 ];
 
 function addsForbiddenSemanticMarkers(candidate, input) {

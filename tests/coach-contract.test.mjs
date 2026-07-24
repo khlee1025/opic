@@ -978,6 +978,39 @@ test("fact guard rejects unsupported duration and intensity without discarding c
   );
 });
 
+test("fact guard isolates an invented trip home even when home appears as a place", async () => {
+  const request = {
+    ...baseRequest,
+    stage: "post_rewrite",
+    koreanPlan: {
+      answer: "나는 집 근처 헬스장에서 운동한다.",
+      reason: "운동하면 스트레스를 풀 수 있다.",
+      example: "지난 금요일에 친구와 한 시간 운동했다.",
+      closing: "그 헬스장은 나에게 중요한 장소다.",
+    },
+    englishDraft: "I exercise at a gym near my home.",
+    rewriteDraft: "I exercise at a gym near my home. Last Friday, I worked out with my friend for one hour.",
+  };
+  const unsafeNatural = `${request.rewriteDraft} We talked before heading home.`;
+  const result = await createCoachFeedback(request, {
+    fetchImpl: async (_url, init) => {
+      const body = JSON.parse(init.body);
+      return ollamaEnvelope(isFinalAnswerPass(body)
+        ? validFinalAnswers(request.rewriteDraft, { naturalEnglish: unsafeNatural })
+        : validPostAnalysis());
+    },
+  });
+
+  assert.equal(result.source, "local-model");
+  assert.equal(result.naturalEnglish, null);
+  assert.ok(result.correctedEnglish);
+  assert.ok(result.modelAnswer);
+  assert.doesNotMatch(
+    Object.values(result).filter((value) => typeof value === "string").join("\n"),
+    /heading home/i,
+  );
+});
+
 test("post-rewrite preserves corrections already taught by the coach", async () => {
   const request = {
     ...baseRequest,
