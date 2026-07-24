@@ -648,7 +648,7 @@ test("pension and after-a-long-time rules require the same context as the app ru
   );
 });
 
-test("request validation requires the Korean planning stage and a rewrite before final answers", () => {
+test("request validation requires Korean planning and protects legacy rewrite submissions", () => {
   assert.throws(
     () => validateCoachRequest({ ...baseRequest, koreanPlan: {} }),
     /한국어 답변 설계/,
@@ -666,6 +666,15 @@ test("request validation requires the Korean planning stage and a rewrite before
     }),
     (error) => error?.code === "REWRITE_UNCHANGED",
   );
+  const firstDraftReview = validateCoachRequest({
+    ...baseRequest,
+    stage: "post_rewrite",
+    englishDraft: "I met my friend at a cafe.",
+    rewriteDraft: "I met my friend at a cafe.",
+    firstDraftReview: true,
+  });
+  assert.equal(firstDraftReview.firstDraftReview, true);
+  assert.equal(firstDraftReview.rewriteDraft, firstDraftReview.englishDraft);
 });
 
 test("request validation caps aggregate prompt context before model invocation", () => {

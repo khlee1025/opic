@@ -8,6 +8,6 @@ test("moves every practice stage back to the previous editable screen", () => {
   assert.equal(getPreviousPracticeStage("korean_completed"), "question_seen");
   assert.equal(getPreviousPracticeStage("draft_submitted"), "korean_completed");
   assert.equal(getPreviousPracticeStage("feedback_ready"), "korean_completed");
-  assert.equal(getPreviousPracticeStage("rewrite_submitted"), "feedback_ready");
-  assert.equal(getPreviousPracticeStage("completed"), "feedback_ready");
+  assert.equal(getPreviousPracticeStage("rewrite_submitted"), "korean_completed");
+  assert.equal(getPreviousPracticeStage("completed"), "korean_completed");
 });

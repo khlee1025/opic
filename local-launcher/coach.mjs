@@ -299,6 +299,7 @@ export function validateCoachRequest(value) {
     koreanPlan: normalizePlan(value.koreanPlan),
     englishDraft: requireText(value.englishDraft, "englishDraft", MAX_DRAFT_CHARS),
     rewriteDraft: "",
+    firstDraftReview: value.firstDraftReview === true,
   };
 
   if (stage === "post_rewrite") {
@@ -308,6 +309,7 @@ export function validateCoachRequest(value) {
       MAX_DRAFT_CHARS,
     );
     if (
+      !normalized.firstDraftReview &&
       normalizedRewriteText(normalized.rewriteDraft) ===
       normalizedRewriteText(normalized.englishDraft)
     ) {
@@ -574,12 +576,12 @@ NON-NEGOTIABLE RULES
 10. Never intensify a fact. For example, "a fever" must not become "a high fever," and work stress must not become "a long day at work" unless the learner actually said so.
 11. Preserve frequency, certainty, cause, agency, reported action, and outcome exactly. "Once" must never become "used to," "usually," or a habit. When the learner only says that somebody contacted them, say only "contacted" or "reached out"; never infer what that person said, requested, complained about, or felt. Never infer sleep, anger, happiness, motivation, conflict, or any other unstated consequence.
 12. Do not add a residence type or examples of places or objects. For example, "home and neighborhood" does not authorize "apartment," "hallway," or "laundry room." A generalization may only restate the learner's own reason or conclusion; it may not introduce a new cause, result, or social benefit.
-13. In post_rewrite, analyze rewriteDraft only. Do not repeat feedback about text that appears only in the first englishDraft.
+13. In post_rewrite, analyze rewriteDraft as the submitted review source. It may be the learner's first and only draft. Do not call it a rewrite or imply that the learner already revised it.
 14. Write diagnosisKo, every explanationKo, every rewrite target, every whyKo, and nextTaskKo in Korean.
 
 STAGE: ${stage}
 For feedback: correctedEnglish, naturalEnglish, modelAnswer, and stretchAnswer MUST be null; phraseUpgrades MUST be empty. Give only diagnosis, up to 3 issues, and rewrite targets so the learner rewrites independently.
-For post_rewrite: this is an analysis-only pass. correctedEnglish, naturalEnglish, modelAnswer, and stretchAnswer MUST all be null. Analyze rewriteDraft, return up to 3 concise issues whose original spans occur exactly in rewriteDraft, and include 2-4 concise phraseUpgrades. Do not generate or preview any complete answer. Keep diagnosisKo to two short sentences, each issue explanation to one short sentence, and nextTaskKo to one sentence. diagnosisKo and nextTaskKo must be non-empty.`;
+For post_rewrite: this is an analysis-only pass. correctedEnglish, naturalEnglish, modelAnswer, and stretchAnswer MUST all be null. Analyze rewriteDraft as the submitted answer, return up to 3 concise issues whose original spans occur exactly in rewriteDraft, and include 2-4 concise phraseUpgrades. Do not generate or preview any complete answer. Keep diagnosisKo to two short sentences, each issue explanation to one short sentence, and nextTaskKo to one sentence. diagnosisKo and nextTaskKo must be non-empty.`;
 }
 
 function modelUserPayload(input) {
@@ -659,7 +661,7 @@ Return JSON only.`;
 
 function finalAnswerUserPayload(input) {
   return JSON.stringify({
-    task: "Regenerate four fact-locked final answers from the learner's rewrite.",
+    task: "Regenerate four fact-locked final answers from the learner's submitted answer.",
     targetLevel: input.targetLevel,
     questionContextOnly: input.question,
     source: {

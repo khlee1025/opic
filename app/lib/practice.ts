@@ -6,8 +6,8 @@ const PREVIOUS_STAGE: Readonly<Record<PracticeStage, PracticeStage | null>> = {
   korean_completed: "question_seen",
   draft_submitted: "korean_completed",
   feedback_ready: "korean_completed",
-  rewrite_submitted: "feedback_ready",
-  completed: "feedback_ready",
+  rewrite_submitted: "korean_completed",
+  completed: "korean_completed",
 };
 
 /** Returns the last editable screen while preserving everything already typed. */

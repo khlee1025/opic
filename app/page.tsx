@@ -20,6 +20,7 @@ import {
 } from "./data/questions";
 import { APP_VERSION } from "./lib/version";
 import { getPreviousPracticeStage } from "./lib/practice";
+import { buildRedlineSegments } from "./lib/redline";
 import { applyDeterministicRules, detectRuleIssues } from "./lib/rules";
 import {
   clearCoachState,
@@ -125,11 +126,6 @@ function comparableText(text: string) {
     .normalize("NFKC")
     .toLocaleLowerCase("en-US")
     .replace(/[\p{P}\p{S}\s]+/gu, "");
-}
-
-function hasMeaningfulRewrite(attempt: QuestionAttempt) {
-  const rewrite = comparableText(attempt.englishRewrite);
-  return rewrite.length >= 10 && rewrite !== comparableText(attempt.englishDraft);
 }
 
 function planComplete(plan: KoreanPlan) {
@@ -250,6 +246,8 @@ async function fetchCoachFeedback(
         koreanPlan: attempt.koreanPlan,
         englishDraft: attempt.englishDraft,
         rewriteDraft: stage === "post_rewrite" ? attempt.englishRewrite : "",
+        firstDraftReview: stage === "post_rewrite" &&
+          comparableText(attempt.englishRewrite) === comparableText(attempt.englishDraft),
       }),
     });
     window.clearTimeout(timer);
@@ -300,9 +298,9 @@ function Onboarding({
           <aside className="onboarding-intro">
             <div className="brand-mark">OPIc</div>
             <h1>생각은 한국어로,<br />답변은 자연스러운 영어로.</h1>
-            <p>매일 두 문제만 풀어도 됩니다. 먼저 말할 내용을 만들고, 영어로 다시 표현한 뒤, 직접 고쳐 쓰면서 내 표현으로 만듭니다.</p>
+            <p>매일 두 문제만 풀어도 됩니다. 먼저 말할 내용을 만들고 영어로 표현하면, 내 원문 위에 바로 첨삭하고 자연스러운 완성 문단을 보여드립니다.</p>
             <div className="onboarding-steps">
-              {["영어 질문 확인", "한국어 아이디어 4칸", "영어 초안과 핵심 피드백", "재작성 후 개선본 공개"].map((label, index) => (
+              {["영어 질문 확인", "한국어 아이디어 4칸", "내 영어 답변 작성", "빨간펜 첨삭과 완성 문단"].map((label, index) => (
                 <div className="onboarding-step" key={label}><i>{index + 1}</i><span>{label}</span></div>
               ))}
             </div>
@@ -469,7 +467,7 @@ function HomeScreen({
         })}
       </section>
 
-      <div className="section-head"><div><h2>학습 리듬</h2><p>두 문제를 재작성까지 끝내면 하루가 기록됩니다.</p></div></div>
+      <div className="section-head"><div><h2>학습 리듬</h2><p>두 문제의 첨삭 결과까지 확인하면 하루가 기록됩니다.</p></div></div>
       <section className="streak-grid">
         <div className="mini-stat"><span className="mini-stat-label">현재 연속 학습</span><strong className="mini-stat-value">{streak}일</strong></div>
         <div className="mini-stat"><span className="mini-stat-label">최고 기록</span><strong className="mini-stat-value">{longest}일</strong></div>
@@ -500,7 +498,7 @@ function RecordsScreen({ state, todayKey }: { state: CoachState; todayKey: strin
       <section className="practice-card">
         <p className="eyebrow">LOCAL LEARNING RECORD</p>
         <h1 className="page-title">내가 끝낸 만큼만 기록됩니다.</h1>
-        <p className="question-instruction">재작성과 해설까지 마친 답변만 완료로 계산합니다. 이 기록도 이 PC 밖으로 전송되지 않습니다.</p>
+        <p className="question-instruction">첨삭 결과까지 확인한 답변만 완료로 계산합니다. 이 기록도 이 PC 밖으로 전송되지 않습니다.</p>
         <div className="record-stat-grid">
           <div className="mini-stat"><span className="mini-stat-label">완료한 답변</span><strong className="mini-stat-value">{completedAnswers}개</strong></div>
           <div className="mini-stat"><span className="mini-stat-label">완료한 학습일</span><strong className="mini-stat-value">{completedDays}일</strong></div>
@@ -526,15 +524,15 @@ function RecordsScreen({ state, todayKey }: { state: CoachState; todayKey: strin
 }
 
 function Stepper({ stage }: { stage: QuestionAttempt["stage"] }) {
-  const labels = ["질문", "한국어 생각", "영어 초안", "직접 고치기", "최종 해설"];
+  const labels = ["질문", "한국어 생각", "영어 작성", "첨삭 결과"];
   const indexes: Record<QuestionAttempt["stage"], number> = {
     not_started: 0,
     question_seen: 1,
     korean_completed: 2,
     draft_submitted: 2,
-    feedback_ready: 3,
-    rewrite_submitted: 3,
-    completed: 4,
+    feedback_ready: 2,
+    rewrite_submitted: 2,
+    completed: 3,
   };
   const current = indexes[stage];
   return <div className="stepper">{labels.map((label, index) => <div className={`step-item ${index < current ? "done" : ""} ${index === current ? "active" : ""}`} key={label}><div className="step-bar" /><span>{label}</span></div>)}</div>;
@@ -606,14 +604,14 @@ function DraftWriting({ attempt, onDraft, onSubmit }: { attempt: QuestionAttempt
       <h1 className="page-title">같은 내용을 영어로 다시 말해보세요.</h1>
       <div className="coach-callout"><Icon name="book" size={19} /><div><strong>한국어 문장을 순서대로 번역하지 마세요.</strong><br />내가 아는 영어로 먼저 답하고, 막히는 표현은 우회해도 됩니다.</div></div>
       <IdeaPeek plan={attempt.koreanPlan} />
-      <div className="draft-wrap"><label className="draft-label" htmlFor="english-draft"><span>첫 영어 답변</span><span className="word-count">{wordCount(attempt.englishDraft)} words · 자동 저장</span></label><textarea id="english-draft" lang="en" className="draft-textarea" value={attempt.englishDraft} onChange={(event) => onDraft(event.target.value)} placeholder="Start with your main answer. Then add a reason and a specific example..." autoFocus /></div>
-      <div className="button-row"><button type="button" className="primary-button accent" disabled={attempt.englishDraft.trim().length < 10} onClick={onSubmit}>핵심 피드백 받기 <Icon name="arrow" size={17} /></button></div>
+      <div className="draft-wrap"><label className="draft-label" htmlFor="english-draft"><span>내 영어 답변</span><span className="word-count">{wordCount(attempt.englishDraft)} words · 자동 저장</span></label><textarea id="english-draft" lang="en" className="draft-textarea" value={attempt.englishDraft} onChange={(event) => onDraft(event.target.value)} placeholder="Start with your main answer. Then add a reason and a specific example..." autoFocus /></div>
+      <div className="button-row"><button type="button" className="primary-button accent" disabled={attempt.englishDraft.trim().length < 10} onClick={onSubmit}>빨간펜 첨삭 결과 보기 <Icon name="arrow" size={17} /></button></div>
     </div>
   );
 }
 
-function LoadingFeedback({ rewrite }: { rewrite: boolean }) {
-  return <div className="practice-card"><p className="eyebrow">PRIVATE LOCAL REVIEW</p><h1 className="page-title">{rewrite ? "재작성한 답변을 비교하고 있어요." : "내 답변에서 먼저 고칠 것만 찾고 있어요."}</h1><p className="question-instruction">답변은 이 PC 안의 교정 엔진에서만 처리됩니다. 처음 실행할 때는 잠시 더 걸릴 수 있습니다.</p><div className="coach-callout"><div className="loading-dots"><i /><i /><i /></div><div><strong>{rewrite ? "개선본과 모범답안 준비 중" : "최대 3개 우선 피드백 준비 중"}</strong><br />사용자가 말하지 않은 경험이나 사실은 새로 만들지 않습니다.</div></div></div>;
+function LoadingFeedback() {
+  return <div className="practice-card"><p className="eyebrow">PRIVATE LOCAL REVIEW</p><h1 className="page-title">내 답변을 문단 단위로 다듬고 있어요.</h1><p className="question-instruction">답변은 이 PC 안의 교정 엔진에서만 처리됩니다. 처음 실행할 때는 잠시 더 걸릴 수 있습니다.</p><div className="coach-callout"><div className="loading-dots"><i /><i /><i /></div><div><strong>빨간펜 첨삭 · 완성 문단 · 모범답안 준비 중</strong><br />사용자가 말하지 않은 경험이나 사실은 새로 만들지 않습니다.</div></div></div>;
 }
 
 function FeedbackSourceNotice({ feedback, onRetry }: { feedback: CoachFeedback; onRetry?: () => void }) {
@@ -657,38 +655,42 @@ function IssueCards({ feedback }: { feedback: CoachFeedback }) {
   return <div className="issue-list">{feedback.issues.slice(0, 3).map((issue, index) => <article className="issue-card" key={issue.id}><div className="issue-head"><span className="issue-index">{index + 1}</span><span className="issue-category">{ISSUE_LABELS[issue.category]}</span></div><div className="change-line"><span className="before-text" lang="en">{issue.original}</span><span className="change-arrow">→</span><span className="after-text" lang="en">{issue.suggestion}</span></div><p className="issue-explanation">{issue.explanationKo}</p></article>)}</div>;
 }
 
-function FeedbackAndRewrite({ attempt, onRewrite, onSubmit, onRetry }: { attempt: QuestionAttempt; onRewrite: (value: string) => void; onSubmit: () => void; onRetry: () => void }) {
-  const feedback = attempt.feedback ?? buildFallbackFeedback("feedback", attempt);
-  const rewriteChanged = hasMeaningfulRewrite(attempt);
-  const hasEnoughText = comparableText(attempt.englishRewrite).length >= 10;
+function RedlineAnswer({ text, issues }: { text: string; issues: CoachIssue[] }) {
+  const segments = buildRedlineSegments(text, issues);
+  const correctionCount = segments.filter((segment) => segment.kind === "change").length;
   return (
-    <div className="practice-card">
-      <p className="eyebrow">STEP 3 · PRIORITY FEEDBACK</p>
-      <h1 className="page-title">한꺼번에 말고, 중요한 것부터 고칩니다.</h1>
-      <FeedbackSourceNotice feedback={feedback} onRetry={onRetry} />
-      <div className="feedback-summary"><small>한 줄 진단</small><p>{feedback.diagnosisKo}</p></div>
-      <IntentCoveragePanel feedback={feedback} />
-      <IssueCards feedback={feedback} />
-      <div className="rewrite-targets"><strong>이번 재작성 목표</strong><div className="target-chips">{feedback.rewriteTargets.map((target) => <span className="target-chip" key={target}>{target}</span>)}</div></div>
-      <div className="locked-answer"><span>🔒 자연스러운 개선본과 모범답안은 직접 한 번 고쳐 쓴 뒤 공개됩니다.</span></div>
-      <div className="draft-wrap"><label className="draft-label" htmlFor="english-rewrite"><span>두 번째 영어 답변</span><span className="word-count">{wordCount(attempt.englishRewrite)} words</span></label><textarea id="english-rewrite" lang="en" className="draft-textarea" value={attempt.englishRewrite} onChange={(event) => onRewrite(event.target.value)} placeholder="Use the feedback above, but write the whole answer in your own words..." autoFocus /></div>
-      {hasEnoughText && !rewriteChanged && <p className="validation-message" role="alert">첫 답변과 같습니다. 피드백을 반영해 표현이나 구조를 한 군데 이상 바꿔주세요.</p>}
-      <div className="button-row"><button type="button" className="primary-button accent" disabled={!rewriteChanged} onClick={onSubmit}>재작성 제출하고 해설 보기 <Icon name="arrow" size={17} /></button></div>
-    </div>
+    <section className="redline-section">
+      <div className="result-section-head">
+        <div><span className="section-number">01</span><h3>내 원문 · 빨간펜 첨삭</h3></div>
+        <span className="correction-count">{correctionCount ? `${correctionCount}곳 교정` : "큰 오류 없음"}</span>
+      </div>
+      <div className="redline-paper">
+        <p className="redline-copy" lang="en">
+          {segments.map((segment, index) => segment.kind === "plain"
+            ? <span key={`plain-${index}`}>{segment.text}</span>
+            : (
+              <span className="redline-change" key={`${segment.issueId}-${index}`}>
+                <del>{segment.original}</del>
+                <span className="redline-arrow" aria-hidden="true"> → </span>
+                <ins>{segment.suggestion}</ins>
+              </span>
+            ))}
+        </p>
+      </div>
+      <div className="redline-legend"><span><i className="legend-delete" />내가 쓴 표현</span><span><i className="legend-insert" />추천 표현</span></div>
+    </section>
   );
 }
 
-function FinalExplanation({ question, attempt, answerHidden, speakingSeconds, speakingRunning, onSpeakingToggle, onNext, onRetry }: { question: DailyQuestion; attempt: QuestionAttempt; answerHidden: boolean; speakingSeconds: number; speakingRunning: boolean; onSpeakingToggle: () => void; onNext: () => void; onRetry: () => void }) {
+function FinalExplanation({ question, attempt, answerHidden, speakingSeconds, speakingRunning, onSpeakingToggle, onNext, onRetry, onOptionalRewrite }: { question: DailyQuestion; attempt: QuestionAttempt; answerHidden: boolean; speakingSeconds: number; speakingRunning: boolean; onSpeakingToggle: () => void; onNext: () => void; onRetry: () => void; onOptionalRewrite: (value: string) => void }) {
   const feedback = attempt.feedback ?? buildFallbackFeedback("post_rewrite", attempt);
-  const baseAnswer = feedback.correctedEnglish || feedback.naturalEnglish || attempt.englishRewrite;
+  const polishedAnswer = feedback.naturalEnglish || feedback.correctedEnglish || attempt.englishDraft;
   const candidates = feedback.source === "local-model"
     ? [
-        { title: "문법을 바로잡은 답변", content: baseAnswer, className: "" },
-        { title: "내 의미를 살린 자연스러운 개선본", content: feedback.naturalEnglish, className: "" },
-        { title: "말하기용 모범답안", content: feedback.modelAnswer, className: "" },
+        { title: "말하기용 모범답안", content: feedback.modelAnswer, className: "model" },
         { title: "IH → AL 확장 예시", content: feedback.stretchAnswer, className: "stretch" },
       ]
-    : [{ title: "기본 규칙으로 다듬은 답변", content: baseAnswer, className: "" }];
+    : [];
   const seenAnswers = new Set<string>();
   const answerSections = candidates.filter((candidate) => {
     if (!candidate.content) return false;
@@ -699,15 +701,30 @@ function FinalExplanation({ question, attempt, answerHidden, speakingSeconds, sp
   });
   return (
     <div className="practice-card">
-      <p className="eyebrow">FINAL · YOUR IMPROVEMENT</p>
-      <h1 className="page-title">내 답변을 살린 최종 해설입니다.</h1>
-      <p className="question-instruction">정답을 새로 외우는 대신, 내가 말하려던 사실을 유지하면서 더 자연스러운 영어로 다듬었습니다.</p>
+      <p className="eyebrow">RESULT · RED PEN REVIEW</p>
+      <h1 className="page-title">내가 쓴 문단 위에서 바로 확인하세요.</h1>
+      <p className="question-instruction">틀리거나 어색한 표현은 원문에 빨간 취소선으로 표시하고, 바로 옆에 추천 표현을 붙였습니다. 아래 완성 문단은 내가 말하려던 사실을 유지해 자연스럽게 다듬은 버전입니다.</p>
       {!answerHidden && <FeedbackSourceNotice feedback={feedback} onRetry={feedback.source === "local-model" ? undefined : onRetry} />}
       {!answerHidden && <>
-        <div className="compare-grid"><div className="compare-panel"><h4>첫 답변</h4><p>{attempt.englishDraft}</p></div><div className="compare-panel improved"><h4>내 재작성</h4><p>{attempt.englishRewrite}</p></div></div>
+        <RedlineAnswer text={attempt.englishDraft} issues={feedback.issues} />
+        <div className="feedback-summary"><small>한 줄 진단</small><p>{feedback.diagnosisKo}</p></div>
+        <IntentCoveragePanel feedback={feedback} />
+        <section className="reason-section">
+          <div className="result-section-head"><div><span className="section-number">02</span><h3>왜 이렇게 고쳤는지</h3></div></div>
+          <IssueCards feedback={feedback} />
+        </section>
         {feedback.source !== "local-model" && <p className="rules-limit-note">현재 결과는 기본 규칙 교정입니다. 로컬 AI가 준비되기 전에는 자연스러운 개선본·모범답안·AL 확장 예시를 임의로 표시하지 않습니다.</p>}
+        <section className="answer-section polished">
+          <div className="result-section-head"><div><span className="section-number">03</span><h3>자연스럽게 다듬은 완성 문단</h3></div><span className="answer-badge">내 내용 유지</span></div>
+          <p className="answer-copy" lang="en">{polishedAnswer}</p>
+        </section>
         {answerSections.map((section) => <section className={`answer-section ${section.className}`} key={section.title}><h3>{section.title}</h3><p className="answer-copy" lang="en">{section.content}</p></section>)}
         {Boolean(feedback.phraseUpgrades?.length) && <section className="answer-section"><h3>다시 쓸 수 있는 표현</h3><div className="phrase-chips">{feedback.phraseUpgrades?.map((phrase) => <span className="phrase-chip" key={`${phrase.from}-${phrase.to}`}>{phrase.to}</span>)}</div></section>}
+        <details className="optional-rewrite">
+          <summary>선택 연습 · 내가 직접 다시 써보기</summary>
+          <p>필수 단계가 아니며, 쓰지 않아도 오늘 학습은 완료됩니다. 첨삭을 확인한 뒤 내 표현으로 한 번 더 정리하고 싶을 때만 사용하세요.</p>
+          <div className="draft-wrap"><label className="draft-label" htmlFor="optional-english-rewrite"><span>나의 선택 재작성</span><span className="word-count">{wordCount(attempt.englishRewrite)} words · 자동 저장</span></label><textarea id="optional-english-rewrite" lang="en" className="draft-textarea compact" value={attempt.englishRewrite} onChange={(event) => onOptionalRewrite(event.target.value)} placeholder="Optional: Rewrite the answer in your own words..." /></div>
+        </details>
       </>}
       <div className="speaking-card"><div className="timer-ring">{speakingSeconds}s</div><div><h4>{answerHidden ? "답안을 가리고 말하는 중" : "마지막 60~90초 말하기"}</h4><p>녹음하거나 전송하지 않습니다. 화면만 가리고 혼자 말해보세요.</p></div><button type="button" className="secondary-button" onClick={onSpeakingToggle}>{speakingRunning ? "중지·답안 보기" : "답안 가리고 시작"}</button></div>
       <div className="button-row" style={{ marginTop: 20 }}><button type="button" className="primary-button accent" onClick={onNext}>오늘 문제 목록으로 <Icon name="arrow" size={17} /></button></div>
@@ -782,17 +799,11 @@ function PracticeScreen({ question, attempt, onBack, updateAttempt, targetLevel,
     const requestId = ++feedbackRequestRef.current;
     const pending = { ...attempt, stage: "draft_submitted" as const, updatedAt: new Date().toISOString() };
     updateAttempt(pending);
-    const feedback = await fetchCoachFeedback("feedback", question, pending, targetLevel);
-    if (feedbackRequestRef.current !== requestId) return;
-    updateAttempt({ ...pending, stage: "feedback_ready", feedback, updatedAt: new Date().toISOString() });
-  };
-
-  const submitRewrite = async () => {
-    if (!hasMeaningfulRewrite(attempt)) return;
-    const requestId = ++feedbackRequestRef.current;
-    const pending = { ...attempt, stage: "rewrite_submitted" as const, updatedAt: new Date().toISOString() };
-    updateAttempt(pending);
-    const feedback = await fetchCoachFeedback("post_rewrite", question, pending, targetLevel);
+    // The existing private API reveals complete answer paragraphs in its
+    // post-review mode. Feed it the learner's first draft as the review source
+    // so a mandatory second draft is no longer needed.
+    const reviewAttempt = { ...pending, englishRewrite: pending.englishDraft };
+    const feedback = await fetchCoachFeedback("post_rewrite", question, reviewAttempt, targetLevel);
     if (feedbackRequestRef.current !== requestId) return;
     updateAttempt({ ...pending, stage: "completed", feedback, completedAt: new Date().toISOString(), updatedAt: new Date().toISOString() });
   };
@@ -815,10 +826,9 @@ function PracticeScreen({ question, attempt, onBack, updateAttempt, targetLevel,
     {attempt.stage === "not_started" && <QuestionIntro question={question} speaking={speakingQuestion} onSpeak={speakQuestion} onNext={() => patchAttempt({ stage: "question_seen" })} />}
     {attempt.stage === "question_seen" && <KoreanPlanning question={question} plan={attempt.koreanPlan} onChange={(koreanPlan) => patchAttempt({ koreanPlan })} onNext={() => patchAttempt({ stage: "korean_completed" })} />}
     {attempt.stage === "korean_completed" && <DraftWriting attempt={attempt} onDraft={(englishDraft) => patchAttempt({ englishDraft })} onSubmit={submitDraft} />}
-    {attempt.stage === "draft_submitted" && <LoadingFeedback rewrite={false} />}
-    {attempt.stage === "feedback_ready" && <FeedbackAndRewrite attempt={attempt} onRewrite={(englishRewrite) => patchAttempt({ englishRewrite })} onSubmit={submitRewrite} onRetry={submitDraft} />}
-    {attempt.stage === "rewrite_submitted" && <LoadingFeedback rewrite />}
-    {attempt.stage === "completed" && <FinalExplanation question={question} attempt={attempt} answerHidden={answerHidden} speakingSeconds={seconds} speakingRunning={timerRunning} onSpeakingToggle={toggleSpeaking} onNext={onCompleted} onRetry={submitRewrite} />}
+    {(attempt.stage === "draft_submitted" || attempt.stage === "rewrite_submitted") && <LoadingFeedback />}
+    {attempt.stage === "feedback_ready" && <DraftWriting attempt={attempt} onDraft={(englishDraft) => patchAttempt({ englishDraft })} onSubmit={submitDraft} />}
+    {attempt.stage === "completed" && <FinalExplanation question={question} attempt={attempt} answerHidden={answerHidden} speakingSeconds={seconds} speakingRunning={timerRunning} onSpeakingToggle={toggleSpeaking} onNext={onCompleted} onRetry={submitDraft} onOptionalRewrite={(englishRewrite) => patchAttempt({ englishRewrite })} />}
   </div>;
 }
 
@@ -1013,8 +1023,9 @@ export default function Home() {
 
   const startQuestion = (question: DailyQuestion) => {
     let attempt = state.days[todayKey]?.attempts[question.id] ?? createQuestionAttempt(question.id);
-    if (attempt.stage === "draft_submitted") attempt = { ...attempt, stage: "korean_completed" };
-    if (attempt.stage === "rewrite_submitted") attempt = { ...attempt, stage: "feedback_ready" };
+    if (["draft_submitted", "feedback_ready", "rewrite_submitted"].includes(attempt.stage)) {
+      attempt = { ...attempt, stage: "korean_completed" };
+    }
     if (!attempt.startedAt) attempt = { ...attempt, startedAt: new Date().toISOString() };
     setState((current) => {
       const updated = upsertQuestionAttempt(current, todayKey, attempt);
