@@ -7,8 +7,10 @@ import { APP_VERSION as CLIENT_APP_VERSION } from "../app/lib/version.ts";
 import { APP_VERSION as SERVER_APP_VERSION } from "../local-launcher/version.mjs";
 
 import {
+  ANALYSIS_TIMEOUT_MS,
   COACH_RESPONSE_SCHEMA,
   FALLBACK_MODEL,
+  FINAL_TIMEOUT_MS,
   FINAL_ANSWER_RESPONSE_SCHEMA,
   MAX_MODEL_TOTAL_TIMEOUT_MS,
   OLLAMA_BASE_URL,
@@ -157,7 +159,9 @@ test("Ollama response schema omits unsupported grammar constraints", () => {
       assert.equal(keys.has(unsupported), false, `${unsupported} must be normalized in code instead`);
     }
   }
-  assert.equal(MAX_MODEL_TOTAL_TIMEOUT_MS, 75_000);
+  assert.equal(ANALYSIS_TIMEOUT_MS, 40_000);
+  assert.equal(FINAL_TIMEOUT_MS, 30_000);
+  assert.equal(MAX_MODEL_TOTAL_TIMEOUT_MS, 90_000);
 });
 
 test("local model request is fixed to loopback, disables thinking/streaming, and hides answers before rewrite", async () => {
@@ -177,6 +181,9 @@ test("local model request is fixed to loopback, disables thinking/streaming, and
   assert.equal(calls[0].body.format.properties.stage.enum[0], "feedback");
   assert.equal(calls[0].body.format.properties.correctedEnglish.type, "null");
   assert.equal(calls[0].body.options.num_predict, 800);
+  const systemPrompt = calls[0].body.messages[0].content;
+  assert.ok(systemPrompt.length <= Math.floor(3_519 * 0.7));
+  assert.match(systemPrompt, /issues.*empty array|issues:\s*\[\]/i);
   assert.equal(feedback.source, "local-model");
   assert.equal(feedback.modelUsed, PRIMARY_MODEL);
   assert.equal(feedback.issues.length, 3);
@@ -410,24 +417,28 @@ test("a model timeout uses the shared budget, skips the second model, and expose
   assert.doesNotMatch(JSON.stringify(result.fallbackReason), /private answer/i);
 });
 
-test("post-rewrite analysis and final generation share one deadline", async () => {
+test("post-rewrite analysis and final generation receive separate time budgets", async () => {
   const request = {
     ...baseRequest,
     stage: "post_rewrite",
     rewriteDraft: "For the first time in a long time, I met my friend at a cafe.",
   };
   let calls = 0;
+  let finalStartedAt = 0;
+  let finalAbortedAt = 0;
   const result = await createCoachFeedback(request, {
     timeoutMs: 25,
     fetchImpl: async (_url, init) => {
       calls += 1;
       const body = JSON.parse(init.body);
       if (!isFinalAnswerPass(body)) {
-        await new Promise((resolve) => setTimeout(resolve, 8));
+        await new Promise((resolve) => setTimeout(resolve, 18));
         return ollamaEnvelope(validPostAnalysis());
       }
+      finalStartedAt = Date.now();
       return await new Promise((_resolve, reject) => {
         init.signal.addEventListener("abort", () => {
+          finalAbortedAt = Date.now();
           reject(new DOMException("private rewrite", "AbortError"));
         }, { once: true });
       });
@@ -437,6 +448,7 @@ test("post-rewrite analysis and final generation share one deadline", async () =
   assert.equal(calls, 2);
   assert.equal(result.source, "rules-only");
   assert.equal(result.fallbackReason, "model_timeout");
+  assert.ok(finalAbortedAt - finalStartedAt >= 18);
   assert.doesNotMatch(JSON.stringify(result), /private rewrite/i);
 });
 
