@@ -43,12 +43,39 @@ function words(text) {
   return text.match(WORD_PATTERN) ?? [];
 }
 
-function coverageSignals(text, sentenceCount) {
+function hasPlanField(koreanPlan, field) {
+  return typeof koreanPlan?.[field] === "string" && koreanPlan[field].trim().length > 0;
+}
+
+function coverageSignals(text, sentenceList, koreanPlan) {
+  const sentenceCount = sentenceList.length;
+  const lastSentence = sentenceList.at(-1) ?? "";
+  const explicitReason =
+    /\b(?:because|since|so|the reason is|that is why|so that|in order to)\b/iu.test(text);
+  const reasonRealization =
+    /\b(?:help|helps|allow|allows|let|lets|make|makes|relax|unwind|release|reduce|keep|stay|maintain|enjoy|feel)\b/iu.test(
+      sentenceList.slice(1).join(" "),
+    );
+  const explicitExample =
+    /\b(?:for example|for instance|in my case|one time|once|when)\b/iu.test(text);
+  const timedPastEvent =
+    /\b(?:last|yesterday|ago|recently|one day|that day|first time|on (?:monday|tuesday|wednesday|thursday|friday|saturday|sunday))\b/iu.test(text) &&
+    tenseSignals(text).past;
+  const explicitClosing =
+    /\b(?:overall|in the end|that is why|for that reason|to sum up)\b/iu.test(text);
+  const closingRealization =
+    /\b(?:i\s+(?:still\s+)?(?:like|love|prefer|enjoy|think|believe|hope|want|would|will)|it\s+(?:is|was|has become)|this\s+(?:is|was|has become)|that(?:'s| is)|favou?rite|important|meaningful|special|visit again|go again)\b/iu.test(
+      lastSentence,
+    );
+
   return {
     answer: sentenceCount >= 1,
-    reason: /\b(?:because|since|so|the reason is|that is why)\b/iu.test(text),
-    example: /\b(?:for example|for instance|in my case|one time|once|when)\b/iu.test(text),
-    closing: /\b(?:overall|in the end|that is why|for that reason|to sum up)\b/iu.test(text),
+    reason: explicitReason ||
+      (hasPlanField(koreanPlan, "reason") && sentenceCount >= 2 && reasonRealization),
+    example: explicitExample ||
+      (hasPlanField(koreanPlan, "example") && sentenceCount >= 3 && timedPastEvent),
+    closing: explicitClosing ||
+      (hasPlanField(koreanPlan, "closing") && sentenceCount >= 3 && closingRealization),
   };
 }
 
@@ -112,7 +139,7 @@ export function scoreResponse({
   const text = typeof rewriteDraft === "string" ? rewriteDraft.trim() : "";
   const sentenceList = sentences(text);
   const wordList = words(text);
-  const coverage = coverageSignals(text, sentenceList.length);
+  const coverage = coverageSignals(text, sentenceList, koreanPlan);
   const coverageCount = Object.values(coverage).filter(Boolean).length;
   const subordinateClauseCount = (text.match(SUBORDINATE_PATTERN) ?? []).length;
   const connectorNames = CONNECTORS
