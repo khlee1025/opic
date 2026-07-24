@@ -479,7 +479,7 @@ export async function warmLocalModel(options = {}) {
         keep_alive: "30m",
         options: {
           temperature: 0,
-          num_ctx: 512,
+          num_ctx: 4096,
           num_predict: 8,
         },
       }),

@@ -1287,6 +1287,7 @@ test("model warmup uses only a fixed synthetic prompt and keeps the model reside
   assert.equal(warmupBody.model, PRIMARY_MODEL);
   assert.equal(warmupBody.keep_alive, "30m");
   assert.equal(warmupBody.think, false);
+  assert.equal(warmupBody.options.num_ctx, 4096);
   assert.equal(warmupBody.messages[0].content, "Reply with only the word ready.");
   assert.doesNotMatch(JSON.stringify(warmupBody), /friend|cafe|koreanPlan/i);
 });
