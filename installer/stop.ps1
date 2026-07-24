@@ -33,9 +33,26 @@ if (-not $process -or $process.ProcessName -ne "node") {
 }
 
 $taskkill = Join-Path $env:SystemRoot "System32\taskkill.exe"
-& $taskkill /PID "$serverProcessId" /T /F | Out-Null
-if ($LASTEXITCODE -ne 0) {
-  throw "OPIc Daily Coach 프로세스 트리를 종료하지 못했습니다."
+try {
+  & $taskkill /PID "$serverProcessId" /T /F 2>$null | Out-Null
+  if ($LASTEXITCODE -ne 0) {
+    throw "taskkill exit $LASTEXITCODE"
+  }
+} catch {
+  # Some Windows policies deny taskkill /T even when the verified root
+  # process may be stopped. The local model exits when its parent pipe closes.
+  Stop-Process -Id $serverProcessId -Force -ErrorAction Stop
+}
+
+$deadline = (Get-Date).AddSeconds(5)
+do {
+  $remaining = Get-Process -Id $serverProcessId -ErrorAction SilentlyContinue
+  if (-not $remaining) { break }
+  Start-Sleep -Milliseconds 200
+} while ((Get-Date) -lt $deadline)
+
+if ($remaining) {
+  throw "OPIc Daily Coach 프로세스를 종료하지 못했습니다."
 }
 
 Remove-Item -LiteralPath $pidPath -Force -ErrorAction SilentlyContinue

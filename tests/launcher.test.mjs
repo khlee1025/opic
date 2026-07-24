@@ -4,9 +4,11 @@ import test from "node:test";
 
 import { terminateProcessTree } from "../local-launcher/server.mjs";
 
-test("Windows launcher is UTF-8 with BOM for PowerShell 5.1 Korean text", async () => {
-  const bytes = await readFile(new URL("../installer/launch.ps1", import.meta.url));
-  assert.deepEqual([...bytes.subarray(0, 3)], [0xef, 0xbb, 0xbf]);
+test("Windows scripts are UTF-8 with BOM for PowerShell 5.1 Korean text", async () => {
+  for (const script of ["launch.ps1", "stop.ps1"]) {
+    const bytes = await readFile(new URL(`../installer/${script}`, import.meta.url));
+    assert.deepEqual([...bytes.subarray(0, 3)], [0xef, 0xbb, 0xbf], script);
+  }
 });
 
 test("stop script validates the local service and terminates its process tree", async () => {
@@ -14,6 +16,8 @@ test("stop script validates the local service and terminates its process tree", 
   assert.match(source, /opic-daily-coach/);
   assert.match(source, /server\.pid/);
   assert.match(source, /taskkill(?:\.exe)?[\s\S]*\/T[\s\S]*\/F/i);
+  assert.match(source, /Stop-Process\s+-Id\s+\$serverProcessId\s+-Force/i);
+  assert.match(source, /Get-Process\s+-Id\s+\$serverProcessId/i);
 });
 
 test("Windows child cleanup uses taskkill for the full process tree", async () => {
