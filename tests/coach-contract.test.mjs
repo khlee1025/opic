@@ -133,7 +133,15 @@ function validFinalAnswers(rewriteDraft, overrides = {}) {
 }
 
 function isFinalAnswerPass(body) {
-  return body?.format?.required?.length === 4 &&
+  const required = body?.format?.required;
+  return Array.isArray(required) &&
+    required.length >= 1 &&
+    required.every((field) => [
+      "correctedEnglish",
+      "naturalEnglish",
+      "modelAnswer",
+      "stretchAnswer",
+    ].includes(field)) &&
     !Object.hasOwn(body.format.properties ?? {}, "stage");
 }
 
@@ -164,8 +172,8 @@ test("Ollama response schema omits unsupported grammar constraints", () => {
   }
   assert.equal(ANALYSIS_TIMEOUT_MS, 65_000);
   assert.equal(FINAL_TIMEOUT_MS, 35_000);
-  assert.equal(RETRY_TIMEOUT_MS, 15_000);
-  assert.equal(MAX_MODEL_TOTAL_TIMEOUT_MS, 115_000);
+  assert.equal(RETRY_TIMEOUT_MS, 25_000);
+  assert.equal(MAX_MODEL_TOTAL_TIMEOUT_MS, 125_000);
   assert.equal(
     ANALYSIS_TIMEOUT_MS + FINAL_TIMEOUT_MS + RETRY_TIMEOUT_MS,
     MAX_MODEL_TOTAL_TIMEOUT_MS,
@@ -189,7 +197,7 @@ test("local model request is fixed to loopback, disables thinking/streaming, and
   assert.equal(calls[0].body.keep_alive, "30m");
   assert.equal(calls[0].body.format.properties.stage.enum[0], "feedback");
   assert.equal(calls[0].body.format.properties.correctedEnglish.type, "null");
-  assert.equal(calls[0].body.options.num_predict, 900);
+  assert.equal(calls[0].body.options.num_predict, 1100);
   assert.equal(calls[0].body.options.num_ctx, 2048);
   const systemPrompt = calls[0].body.messages[0].content;
   assert.ok(systemPrompt.length <= Math.floor(3_519 * 0.7));
@@ -225,7 +233,7 @@ test("post-rewrite uses analysis-only then closed-book answer generation", async
   const [analysisBody, finalBody] = calls;
   assert.equal(analysisBody.format.properties.correctedEnglish.type, "null");
   assert.equal(analysisBody.format.properties.stretchAnswer.type, "null");
-  assert.equal(analysisBody.options.num_predict, 900);
+  assert.equal(analysisBody.options.num_predict, 1100);
   const analysisInput = JSON.parse(analysisBody.messages[1].content);
   assert.equal(analysisInput.englishDraft, null);
   assert.equal(analysisInput.rewriteDraft, request.rewriteDraft);
@@ -292,7 +300,39 @@ test("feedback drops a correction that invents an unsupported brand", async () =
   });
 
   assert.equal(result.source, "local-model");
-  assert.deepEqual(result.issues, []);
+  assert.ok(result.issues.every((issue) => !/Starbucks/i.test(issue.corrected)));
+  assert.ok(result.issues.some((issue) => /had plans with my friend/i.test(issue.corrected)));
+});
+
+test("exercise feedback rejects hang-out meaning drift and keeps safe local collocations", async () => {
+  const request = {
+    ...baseRequest,
+    question: "Tell me about the gym you usually go to and a recent visit.",
+    koreanPlan: {
+      answer: "집 근처 헬스장에서 운동한다.",
+      reason: "스트레스를 풀고 건강을 유지하는 데 좋다.",
+      example: "지난 금요일에 친구와 한 시간 운동했다.",
+      closing: "나에게 가장 좋은 충전 공간이다.",
+    },
+    englishDraft: "I release my stress there. I keep my health there. Last Friday, we played exercise for one hour. It is my best charging place.",
+  };
+  const result = await createCoachFeedback(request, {
+    fetchImpl: async () => ollamaEnvelope(validModelFeedback({
+      issues: [{
+        priority: 1,
+        original: "we played exercise",
+        corrected: "we hung out with friends",
+        category: "naturalness",
+        explanationKo: "친구와 시간을 보냈다는 뜻입니다.",
+      }],
+    })),
+  });
+
+  assert.equal(result.source, "local-model");
+  assert.ok(result.issues.some((issue) =>
+    /played exercise/i.test(issue.original)
+    && /worked out/i.test(issue.corrected)));
+  assert.ok(result.issues.every((issue) => !/\b(?:hang|hung)\s+out\b/i.test(issue.corrected)));
 });
 
 test("keeps valid analysis and hides final cards after one empty-answer retry", async () => {
@@ -510,7 +550,7 @@ test("isolates a model answer that adds unsupported numeric facts", async () => 
     },
   });
 
-  assert.deepEqual(models, [PRIMARY_MODEL, PRIMARY_MODEL]);
+  assert.deepEqual(models, [PRIMARY_MODEL, PRIMARY_MODEL, PRIMARY_MODEL]);
   assert.equal(result.modelUsed, PRIMARY_MODEL);
   assert.equal(result.naturalEnglish, null);
   assert.equal(typeof result.correctedEnglish, "string");
@@ -536,7 +576,7 @@ test("isolates newly invented proper place names without rejecting ordinary fiel
     },
   });
 
-  assert.deepEqual(models, [PRIMARY_MODEL, PRIMARY_MODEL]);
+  assert.deepEqual(models, [PRIMARY_MODEL, PRIMARY_MODEL, PRIMARY_MODEL]);
   assert.equal(result.modelUsed, PRIMARY_MODEL);
   assert.equal(result.naturalEnglish, null);
   assert.match(result.modelAnswer, /Here is the main point/);
@@ -568,7 +608,11 @@ test("post-rewrite rejects changed frequency and inferred contact actions", asyn
     },
   });
 
-  assert.deepEqual(calls.map((body) => body.model), [PRIMARY_MODEL, PRIMARY_MODEL]);
+  assert.deepEqual(calls.map((body) => body.model), [
+    PRIMARY_MODEL,
+    PRIMARY_MODEL,
+    PRIMARY_MODEL,
+  ]);
   const primaryFinalInput = JSON.parse(calls[1].messages[1].content);
   assert.match(primaryFinalInput.source.hardLocks.join("\n"), /one-time event/i);
   assert.match(primaryFinalInput.source.hardLocks.join("\n"), /only says that someone contacted/i);
@@ -691,6 +735,96 @@ test("post-rewrite retries unchanged corrections and weak AL stretch answers", a
   assert.notEqual(result.stretchAnswer, weak.stretchAnswer);
 });
 
+test("post-rewrite repairs malformed transition capitalization after retry", async () => {
+  const request = {
+    ...baseRequest,
+    stage: "post_rewrite",
+    koreanPlan: {
+      answer: "비가 와서 친구와 실내에 있었다.",
+      reason: "비를 피하고 싶었다.",
+      example: "친구와 앉아서 오랜만에 이야기했다.",
+      closing: "그래도 좋은 시간이었다.",
+    },
+    englishDraft: "It rained, so my friend and I sat inside.",
+    rewriteDraft: "It rained, so my friend and I sat inside. We talked for the first time in a long time.",
+  };
+  const malformed = validFinalAnswers(request.rewriteDraft, {
+    modelAnswer: "Because It rained, so my friend and I sat inside. While We sat inside, we talked for the first time in a long time.",
+  });
+  const calls = [];
+  const result = await createCoachFeedback(request, {
+    fetchImpl: async (_url, init) => {
+      const body = JSON.parse(init.body);
+      calls.push(body);
+      return ollamaEnvelope(isFinalAnswerPass(body)
+        ? malformed
+        : validPostAnalysis());
+    },
+  });
+
+  assert.equal(calls.length, 3);
+  const retryInput = JSON.parse(calls[2].messages[1].content);
+  assert.ok(retryInput.retryConstraints.some((item) =>
+    /malformed transition capitalization/i.test(item)));
+  assert.ok(retryInput.retryConstraints.some((item) =>
+    /malformed double connector/i.test(item)));
+  assert.deepEqual(retryInput.requestedFields, ["modelAnswer"]);
+  assert.deepEqual(calls[2].format.required, ["modelAnswer"]);
+  assert.match(result.modelAnswer, /Because it rained/);
+  assert.match(result.modelAnswer, /While we sat/);
+  assert.doesNotMatch(result.modelAnswer, /because It|While We|Because it rained,\s*so/);
+});
+
+test("post-rewrite keeps valid first-pass cards while replacing an unsafe field", async () => {
+  const request = {
+    ...baseRequest,
+    stage: "post_rewrite",
+    koreanPlan: {
+      answer: "카페에서 친구를 만났다.",
+      reason: "친구와 이야기하고 싶었다.",
+      example: "친구와 카페에서 이야기했다.",
+      closing: "좋은 만남이었다.",
+    },
+    englishDraft: "I met my friend at a cafe, and we talked.",
+    rewriteDraft: "I met my friend at a cafe, and we talked.",
+    firstDraftReview: true,
+  };
+  const firstNatural = "Actually, I met my friend at a cafe, and we talked there.";
+  const first = {
+    correctedEnglish: request.rewriteDraft,
+    naturalEnglish: firstNatural,
+    modelAnswer: `${request.rewriteDraft} Then we went home.`,
+    stretchAnswer: "Although the meeting was at a cafe, I met my friend there. In my case, we talked, and overall, that is what happened.",
+  };
+  const retryModel = "My friend and I met at a cafe. We talked there, and that is what happened.";
+  const retry = {
+    correctedEnglish: "",
+    naturalEnglish: request.rewriteDraft,
+    modelAnswer: retryModel,
+    stretchAnswer: "",
+  };
+  let finalCalls = 0;
+  const result = await createCoachFeedback(request, {
+    fetchImpl: async (_url, init) => {
+      const body = JSON.parse(init.body);
+      if (!isFinalAnswerPass(body)) return ollamaEnvelope(validPostAnalysis());
+      finalCalls += 1;
+      return ollamaEnvelope(finalCalls === 1 ? first : retry);
+    },
+  });
+
+  assert.equal(finalCalls, 2);
+  assert.equal(result.naturalEnglish, firstNatural);
+  assert.equal(result.modelAnswer, retryModel);
+  assert.ok(result.correctedEnglish);
+  assert.ok(result.stretchAnswer);
+  assert.doesNotMatch(
+    [result.correctedEnglish, result.naturalEnglish, result.modelAnswer, result.stretchAnswer]
+      .join("\n"),
+    /went home/i,
+  );
+});
+
 test("final answer cards cannot repeat phrases rejected by the same review", async () => {
   const request = {
     ...baseRequest,
@@ -740,16 +874,20 @@ test("final answer cards cannot repeat phrases rejected by the same review", asy
 
   assert.equal(calls.length, 3);
   const firstFinalInput = JSON.parse(calls[1].messages[1].content);
-  assert.deepEqual(firstFinalInput.source.requiredCorrections, [
+  assert.deepEqual(
+    [...firstFinalInput.source.requiredCorrections].sort((a, b) =>
+      a.original.localeCompare(b.original)),
+    [
     {
       original: "I had a promise with my friend",
       corrected: "I had plans with my friend",
     },
     {
-      original: "we played exercise for one hour",
-      corrected: "we exercised for one hour",
+      original: "played exercise",
+      corrected: "worked out",
     },
-  ]);
+    ].sort((a, b) => a.original.localeCompare(b.original)),
+  );
   const retryInput = JSON.parse(calls[2].messages[1].content);
   assert.ok(retryInput.retryConstraints.some((item) => /rejected phrase/i.test(item)));
   for (const answer of [
@@ -908,9 +1046,10 @@ test("fact guard ignores model self-report and whitespace-normalizes issue spans
   });
 
   assert.equal(result.source, "local-model");
-  assert.equal(result.issues.length, 1);
-  assert.equal(result.issues[0].original, "We talked at a cafe");
-  assert.equal(result.issues[0].corrected, "We caught up at a cafe");
+  const whitespaceNormalizedIssue = result.issues.find((issue) =>
+    issue.original === "We talked at a cafe");
+  assert.ok(whitespaceNormalizedIssue);
+  assert.equal(whitespaceNormalizedIssue.corrected, "We caught up at a cafe");
 });
 
 test("fact guard isolates invented brands and calendar facts to the contaminated field", async () => {

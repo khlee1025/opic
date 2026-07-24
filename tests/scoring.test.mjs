@@ -77,3 +77,49 @@ test("local-rule violations reduce accuracy without changing determinism", () =>
   assert.ok(clean.subScores.accuracy > noisy.subScores.accuracy);
   assert.ok(noisy.gapToTarget.length <= 2);
 });
+
+test("structured Korean planning recognizes implicit English example and closing", () => {
+  const result = scoreResponse({
+    rewriteDraft: [
+      "I exercise at a gym near my home.",
+      "It helps me relieve stress and stay healthy.",
+      "Last Friday, I worked out with my friend for an hour.",
+      "It is still my favorite place to recharge.",
+    ].join(" "),
+    koreanPlan: {
+      answer: "집 근처 헬스장에서 운동한다.",
+      reason: "스트레스를 풀고 건강을 유지할 수 있다.",
+      example: "지난 금요일 친구와 한 시간 운동했다.",
+      closing: "가장 좋아하는 충전 장소다.",
+    },
+    localRuleViolations: [],
+    targetLevel: "AL",
+  });
+
+  assert.deepEqual(result.metrics.coverage, {
+    answer: true,
+    reason: true,
+    example: true,
+    closing: true,
+  });
+  assert.equal(result.metrics.coverageCount, 4);
+  assert.equal(result.subScores.coverage, 100);
+});
+
+test("a complete Korean plan does not award unrealized English example or closing", () => {
+  const result = scoreResponse({
+    rewriteDraft: "I exercise at a gym near my home. It helps me relax.",
+    koreanPlan: {
+      answer: "집 근처 헬스장에서 운동한다.",
+      reason: "스트레스를 풀 수 있다.",
+      example: "지난 금요일 친구와 운동했다.",
+      closing: "가장 좋아하는 장소다.",
+    },
+    localRuleViolations: [],
+    targetLevel: "AL",
+  });
+
+  assert.equal(result.metrics.coverage.reason, true);
+  assert.equal(result.metrics.coverage.example, false);
+  assert.equal(result.metrics.coverage.closing, false);
+});

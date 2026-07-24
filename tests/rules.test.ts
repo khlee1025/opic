@@ -33,6 +33,13 @@ const regressionCases = [
     corrected: "I had plans with my friend.",
   },
   {
+    name: "exercise uses work out instead of play",
+    draft: "We played exercise for one hour.",
+    original: "played exercise",
+    suggestion: "worked out",
+    corrected: "We worked out for one hour.",
+  },
+  {
     name: "adult social time uses hang out",
     draft: "I play with my friends at a cafe.",
     original: "play with my friends",
