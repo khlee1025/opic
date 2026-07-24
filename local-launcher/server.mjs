@@ -484,7 +484,11 @@ export async function warmLocalModel(options = {}) {
         },
       }),
     });
-    return Boolean(response?.ok);
+    if (!response?.ok) return false;
+    // Ollama can send response headers before the model has finished loading.
+    // Consume the fixed synthetic response fully before reporting "ready".
+    await response.text();
+    return true;
   } catch {
     return false;
   }

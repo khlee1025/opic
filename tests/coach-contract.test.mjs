@@ -1255,6 +1255,7 @@ test("HTTP server binds to 127.0.0.1, stays useful without a model, and never lo
 
 test("model warmup uses only a fixed synthetic prompt and keeps the model resident", async () => {
   const calls = [];
+  let bodyConsumed = false;
   const ready = await warmLocalModel({
     waitTimeoutMs: 20,
     requestTimeoutMs: 100,
@@ -1265,14 +1266,21 @@ test("model warmup uses only a fixed synthetic prompt and keeps the model reside
           models: [{ name: PRIMARY_MODEL }],
         }), { status: 200 });
       }
-      return new Response(JSON.stringify({
+      const response = new Response(JSON.stringify({
         message: { content: "ready" },
         done: true,
       }), { status: 200 });
+      const originalText = response.text.bind(response);
+      response.text = async () => {
+        bodyConsumed = true;
+        return originalText();
+      };
+      return response;
     },
   });
 
   assert.equal(ready, true);
+  assert.equal(bodyConsumed, true);
   assert.equal(calls.length, 2);
   const warmupBody = JSON.parse(calls[1].init.body);
   assert.equal(calls[1].url, `${OLLAMA_BASE_URL}/api/chat`);
