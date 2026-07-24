@@ -282,7 +282,7 @@ async function fetchCoachFeedback(
 ): Promise<CoachApiFeedback> {
   try {
     const controller = new AbortController();
-    const timer = window.setTimeout(() => controller.abort(), 130_000);
+    const timer = window.setTimeout(() => controller.abort(), 145_000);
     const response = await fetch("/api/coach", {
       method: "POST",
       headers: { "content-type": "application/json" },
