@@ -11,7 +11,7 @@
     "start": "node local-launcher/server.mjs",
     "start:frontend": "vinext start --host 127.0.0.1 --port 4272",
     "test": "npm run test:unit && npm run build && node --test tests/rendered-html.test.mjs",
-    "test:unit": "node --experimental-strip-types --test tests/coach-contract.test.mjs tests/practice-flow.test.ts tests/question-bank.test.ts tests/redline.test.ts tests/rules.test.ts",
+    "test:unit": "node --experimental-strip-types --test tests/coach-contract.test.mjs tests/practice-flow.test.ts tests/question-bank.test.ts tests/redline.test.ts tests/rules.test.ts tests/scoring.test.mjs",
     "coach": "node local-launcher/server.mjs",
     "benchmark:ai": "node scripts/benchmark-local-ai.mjs",
     "lint": "eslint app local-launcher scripts tests eslint.config.mjs next.config.ts vite.config.ts"

@@ -43,6 +43,7 @@ import type {
   CoachState,
   KoreanPlan,
   QuestionAttempt,
+  RubricScore,
   TargetLevel,
 } from "./lib/types";
 
@@ -176,6 +177,50 @@ function buildFallbackFeedback(
   };
 }
 
+function normalizeRubricScore(value: unknown): RubricScore | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const raw = value as Record<string, unknown>;
+  const band = ["IM2", "IH", "AL"].includes(String(raw.band))
+    ? String(raw.band) as RubricScore["band"]
+    : undefined;
+  if (!band) return undefined;
+  const rawSubScores = raw.subScores && typeof raw.subScores === "object"
+    ? raw.subScores as Record<string, unknown>
+    : {};
+  const rawMetrics = raw.metrics && typeof raw.metrics === "object"
+    ? raw.metrics as Record<string, unknown>
+    : {};
+  const number = (candidate: unknown, maximum = 100) => Math.min(
+    maximum,
+    Math.max(0, Number.isFinite(Number(candidate)) ? Number(candidate) : 0),
+  );
+  return {
+    band,
+    totalScore: number(raw.totalScore),
+    targetLevel: raw.targetLevel === "IH" ? "IH" : "AL",
+    subScores: {
+      coverage: number(rawSubScores.coverage),
+      structure: number(rawSubScores.structure),
+      complexity: number(rawSubScores.complexity),
+      tenseControl: number(rawSubScores.tenseControl),
+      vocabulary: number(rawSubScores.vocabulary),
+      accuracy: number(rawSubScores.accuracy),
+    },
+    metrics: {
+      coverageCount: number(rawMetrics.coverageCount, 4),
+      sentenceCount: number(rawMetrics.sentenceCount, 100),
+      subordinateClauseCount: number(rawMetrics.subordinateClauseCount, 100),
+      connectorDiversity: number(rawMetrics.connectorDiversity, 100),
+      tenseDiversity: number(rawMetrics.tenseDiversity, 4),
+      typeTokenRatio: number(rawMetrics.typeTokenRatio, 1),
+      localRuleViolationCount: number(rawMetrics.localRuleViolationCount, 100),
+    },
+    gapToTarget: Array.isArray(raw.gapToTarget)
+      ? raw.gapToTarget.map(String).filter(Boolean).slice(0, 2)
+      : [],
+  };
+}
+
 function normalizeApiFeedback(raw: Record<string, unknown>): CoachApiFeedback {
   const rawIssues = Array.isArray(raw.issues) ? raw.issues : [];
   const issues: CoachIssue[] = rawIssues.slice(0, 3).map((value, index) => {
@@ -222,6 +267,7 @@ function normalizeApiFeedback(raw: Record<string, unknown>): CoachApiFeedback {
       return { from: String(item.from ?? ""), to: String(item.to ?? ""), whyKo: String(item.whyKo ?? "") };
     }).filter((item) => item.to),
     nextTaskKo: nullableText("nextTaskKo"),
+    score: normalizeRubricScore(raw.score),
   };
 }
 
@@ -635,6 +681,36 @@ function FeedbackSourceNotice({ feedback, onRetry }: { feedback: CoachFeedback; 
   );
 }
 
+function ScoreCard({ score }: { score: RubricScore }) {
+  const subscores = [
+    ["내용 구성", score.subScores.coverage],
+    ["문장 구조", score.subScores.structure],
+    ["복합성", score.subScores.complexity],
+    ["정확성", score.subScores.accuracy],
+  ] as const;
+  return (
+    <section className={`score-card band-${score.band.toLowerCase()}`} aria-label="결정론적 훈련 루브릭">
+      <div className="score-main">
+        <div>
+          <span className="score-label">LOCAL TRAINING RUBRIC</span>
+          <strong className="score-band">{score.band}</strong>
+          <span className="score-target">목표 {score.targetLevel} · {Math.round(score.totalScore)}/100</span>
+        </div>
+        <p>공식 OPIc 등급 판정이 아니라, 같은 답변에는 항상 같은 결과를 주는 로컬 연습 지표입니다.</p>
+      </div>
+      <div className="score-subgrid">
+        {subscores.map(([label, value]) => <div className="score-sub" key={label}><span>{label}</span><strong>{Math.round(value)}</strong><i><b style={{ width: `${Math.round(value)}%` }} /></i></div>)}
+      </div>
+      <div className="score-gaps">
+        <strong>{score.gapToTarget.length ? `${score.targetLevel}까지 우선 보완 2가지` : `${score.targetLevel} 연습 기준 충족`}</strong>
+        {score.gapToTarget.length
+          ? <ol>{score.gapToTarget.map((gap) => <li key={gap}>{gap}</li>)}</ol>
+          : <p>현재 구조를 유지하면서 실제 말하기에서 끊김 없이 전달해 보세요.</p>}
+      </div>
+    </section>
+  );
+}
+
 function IntentCoveragePanel({ feedback }: { feedback: CoachFeedback }) {
   const fields: Array<[keyof CoachFeedback["intentCoverage"], string]> = [
     ["answer", "핵심 답변"],
@@ -712,6 +788,7 @@ function FinalExplanation({ question, attempt, answerHidden, speakingSeconds, sp
       <p className="question-instruction">틀리거나 어색한 표현은 원문에 빨간 취소선으로 표시하고, 바로 옆에 추천 표현을 붙였습니다. 아래 완성 문단은 내가 말하려던 사실을 유지해 자연스럽게 다듬은 버전입니다.</p>
       {!answerHidden && <FeedbackSourceNotice feedback={feedback} onRetry={feedback.source === "local-model" ? undefined : onRetry} />}
       {!answerHidden && <>
+        {feedback.score && <ScoreCard score={feedback.score} />}
         <RedlineAnswer text={attempt.englishDraft} issues={feedback.issues} />
         <div className="feedback-summary"><small>한 줄 진단</small><p>{feedback.diagnosisKo}</p></div>
         <IntentCoveragePanel feedback={feedback} />

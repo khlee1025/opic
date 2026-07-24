@@ -356,6 +356,9 @@ test("rules-only mode remains usable and does not invent facts when both models 
   assert.equal(post.naturalEnglish, post.correctedEnglish);
   assert.equal(post.modelAnswer, post.correctedEnglish);
   assert.doesNotMatch(post.correctedEnglish, /Seoul|yesterday|2025/i);
+  assert.match(post.score.band, /^(?:IM2|IH|AL)$/);
+  assert.equal(typeof post.score.totalScore, "number");
+  assert.ok(post.score.gapToTarget.length <= 2);
 });
 
 test("a model timeout uses the shared budget, skips the second model, and exposes only a safe code", async () => {

@@ -1,3 +1,5 @@
+import { scoreResponse } from "./scoring.mjs";
+
 const MAX_QUESTION_CHARS = 2_000;
 const MAX_PLAN_FIELD_CHARS = 1_000;
 const MAX_DRAFT_CHARS = 5_000;
@@ -581,7 +583,8 @@ export function buildRulesOnlyFeedback(inputValue, fallbackReason = "local_model
     : validateCoachRequest(inputValue);
   const sourceDraft = input.stage === "post_rewrite" ? input.rewriteDraft : input.englishDraft;
   const coverage = coverageFor(input.koreanPlan);
-  const matches = ruleMatches(sourceDraft, input.koreanPlan).slice(0, 3);
+  const allRuleMatches = ruleMatches(sourceDraft, input.koreanPlan);
+  const matches = allRuleMatches.slice(0, 3);
   const issues = matches.map((match, index) => ({
     priority: index + 1,
     original: match.original,
@@ -626,6 +629,12 @@ export function buildRulesOnlyFeedback(inputValue, fallbackReason = "local_model
     nextTaskKo: isPostRewrite
       ? "교정 전후를 소리 내어 비교한 뒤, 같은 구조로 한 번 더 말해 보세요."
       : "위의 세 가지 이내 핵심만 반영해 직접 한 번 다시 써 보세요. 완성 답안은 재작성 뒤에 공개됩니다.",
+    score: scoreResponse({
+      rewriteDraft: sourceDraft,
+      koreanPlan: input.koreanPlan,
+      localRuleViolations: allRuleMatches.map((match) => match.original),
+      targetLevel: input.targetLevel,
+    }),
     factsPreserved: true,
     fallbackReason: safeFallbackReason(fallbackReason),
   };
@@ -1440,6 +1449,13 @@ function normalizeModelFeedback(raw, input, model, invalidFinalFields = new Set(
           !addsForbiddenSemanticMarkers(item.to, input))
         .slice(0, 4)
     : [];
+  const score = scoreResponse({
+    rewriteDraft: sourceDraft,
+    koreanPlan: input.koreanPlan,
+    localRuleViolations: ruleMatches(sourceDraft, input.koreanPlan)
+      .map((match) => match.original),
+    targetLevel: input.targetLevel,
+  });
 
   return {
     version: 1,
@@ -1456,6 +1472,7 @@ function normalizeModelFeedback(raw, input, model, invalidFinalFields = new Set(
     nextTaskKo: safeKoreanString(raw.nextTaskKo, 1_000, isPostRewrite
       ? "교정 전후를 소리 내어 비교해 보세요."
       : "핵심 피드백을 반영해 직접 한 번 다시 써 보세요."),
+    score,
     factsPreserved: true,
     fallbackReason: null,
   };

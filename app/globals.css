@@ -1032,6 +1032,124 @@ textarea:focus {
   background: var(--amber-soft);
 }
 
+.score-card {
+  overflow: hidden;
+  margin: 18px 0 24px;
+  border: 1px solid #ccd8e6;
+  border-radius: 18px;
+  background: #f8fafc;
+}
+
+.score-main {
+  display: grid;
+  grid-template-columns: minmax(210px, auto) 1fr;
+  align-items: center;
+  gap: 24px;
+  padding: 20px 22px;
+  background: var(--navy);
+  color: white;
+}
+
+.score-main > div {
+  display: grid;
+  grid-template-columns: auto auto;
+  align-items: end;
+  column-gap: 12px;
+}
+
+.score-label {
+  grid-column: 1 / -1;
+  margin-bottom: 3px;
+  color: #9db1c4;
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.13em;
+}
+
+.score-band {
+  font-size: 36px;
+  line-height: 1;
+}
+
+.score-target {
+  padding-bottom: 3px;
+  color: #c9d5df;
+  font-size: 11px;
+  font-weight: 680;
+}
+
+.score-main p {
+  margin: 0;
+  color: #c9d5df;
+  font-size: 11px;
+  line-height: 1.6;
+}
+
+.score-subgrid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 1px;
+  background: #dfe6ec;
+}
+
+.score-sub {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 5px 10px;
+  padding: 14px 16px;
+  background: white;
+}
+
+.score-sub span {
+  color: var(--ink-soft);
+  font-size: 10px;
+}
+
+.score-sub strong {
+  color: var(--navy);
+  font-size: 12px;
+}
+
+.score-sub i {
+  grid-column: 1 / -1;
+  overflow: hidden;
+  height: 4px;
+  border-radius: 999px;
+  background: #e6ebef;
+}
+
+.score-sub b {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--blue);
+}
+
+.score-gaps {
+  padding: 16px 20px 18px;
+}
+
+.score-gaps > strong {
+  color: var(--navy);
+  font-size: 11px;
+}
+
+.score-gaps ol {
+  display: grid;
+  gap: 6px;
+  margin: 9px 0 0;
+  padding-left: 18px;
+  color: #4e5d67;
+  font-size: 11px;
+  line-height: 1.55;
+}
+
+.score-gaps p {
+  margin: 7px 0 0;
+  color: var(--green);
+  font-size: 11px;
+}
+
 .feedback-source > div {
   display: grid;
   gap: 4px;
@@ -1821,6 +1939,15 @@ textarea:focus {
 
   .result-section-head {
     align-items: flex-start;
+  }
+
+  .score-main {
+    grid-template-columns: 1fr;
+    gap: 12px;
+  }
+
+  .score-subgrid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .redline-paper {

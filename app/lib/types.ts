@@ -78,6 +78,30 @@ export interface PhraseUpgrade {
   whyKo: string;
 }
 
+export interface RubricScore {
+  band: "IM2" | "IH" | "AL";
+  totalScore: number;
+  targetLevel: TargetLevel;
+  subScores: {
+    coverage: number;
+    structure: number;
+    complexity: number;
+    tenseControl: number;
+    vocabulary: number;
+    accuracy: number;
+  };
+  metrics: {
+    coverageCount: number;
+    sentenceCount: number;
+    subordinateClauseCount: number;
+    connectorDiversity: number;
+    tenseDiversity: number;
+    typeTokenRatio: number;
+    localRuleViolationCount: number;
+  };
+  gapToTarget: string[];
+}
+
 export interface CoachFeedback {
   source?: "local-model" | "rules-only";
   modelUsed?: string | null;
@@ -91,6 +115,7 @@ export interface CoachFeedback {
   stretchAnswer?: string;
   phraseUpgrades?: PhraseUpgrade[];
   nextTaskKo?: string;
+  score?: RubricScore;
 }
 
 export interface QuestionAttempt {
