@@ -342,9 +342,17 @@ export function validateCoachRequest(value) {
 function toGerund(verbPhrase) {
   const [verb, ...rest] = verbPhrase.trim().split(/\s+/);
   const special = {
+    admit: "admitting",
+    begin: "beginning",
+    forget: "forgetting",
     get: "getting",
+    plan: "planning",
+    prefer: "preferring",
+    put: "putting",
     run: "running",
+    shop: "shopping",
     sit: "sitting",
+    stop: "stopping",
     swim: "swimming",
     make: "making",
     wake: "waking",
@@ -616,9 +624,9 @@ export function buildRulesOnlyFeedback(inputValue, fallbackReason = "local_model
     issues,
     rewriteTargets,
     correctedEnglish: isPostRewrite ? corrected : null,
-    naturalEnglish: isPostRewrite ? corrected : null,
-    modelAnswer: isPostRewrite ? corrected : null,
-    stretchAnswer: isPostRewrite ? corrected : null,
+    naturalEnglish: null,
+    modelAnswer: null,
+    stretchAnswer: null,
     phraseUpgrades: isPostRewrite
       ? issues.map((issue) => ({
           from: issue.original,
@@ -1409,10 +1417,6 @@ function normalizeModelFeedback(raw, input, model, invalidFinalFields = new Set(
     .map((value) => safeString(value, 500))
     .filter((value) => /[가-힣]/u.test(value))
     .slice(0, 3);
-  if (rewriteTargets.length === 0) {
-    rewriteTargets.push(...buildRulesOnlyFeedback(input).rewriteTargets);
-  }
-
   const isPostRewrite = input.stage === "post_rewrite";
   let revealFields = isPostRewrite
     ? {
@@ -1491,7 +1495,13 @@ export async function createCoachFeedback(value, options = {}) {
   const deadline = Date.now() + timeoutMs;
   let fallbackReason = "local_model_unavailable";
 
-  for (const model of [PRIMARY_MODEL, FALLBACK_MODEL]) {
+  const availableModels = Array.isArray(options.availableModels)
+    ? new Set(options.availableModels)
+    : null;
+  const modelOrder = [PRIMARY_MODEL, FALLBACK_MODEL]
+    .filter((model) => !availableModels || availableModels.has(model));
+
+  for (const model of modelOrder) {
     if (options.signal?.aborted) throw new LocalModelError("REQUEST_ABORTED");
     const remainingMs = deadline - Date.now();
     if (remainingMs <= 0) {

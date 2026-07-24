@@ -328,6 +328,33 @@ test("falls back from qwen3.5:9b to qwen3.5:4b", async () => {
   assert.equal(result.modelUsed, FALLBACK_MODEL);
 });
 
+test("skips a fallback model that the health manifest says is not installed", async () => {
+  const models = [];
+  const result = await createCoachFeedback(baseRequest, {
+    availableModels: [PRIMARY_MODEL],
+    fetchImpl: async (_url, init) => {
+      const body = JSON.parse(init.body);
+      models.push(body.model);
+      return new Response("primary failed", { status: 500 });
+    },
+  });
+
+  assert.deepEqual(models, [PRIMARY_MODEL]);
+  assert.equal(result.source, "rules-only");
+});
+
+test("local-model feedback never borrows rewrite targets from rules-only mode", async () => {
+  const result = await createCoachFeedback(baseRequest, {
+    fetchImpl: async () => ollamaEnvelope(validModelFeedback({
+      issues: [],
+      rewriteTargets: [],
+    })),
+  });
+
+  assert.equal(result.source, "local-model");
+  assert.deepEqual(result.rewriteTargets, []);
+});
+
 test("rules-only mode remains usable and does not invent facts when both models are unavailable", async () => {
   const unavailable = async () => {
     throw new Error("offline");
@@ -353,8 +380,9 @@ test("rules-only mode remains usable and does not invent facts when both models 
 
   assert.equal(post.source, "rules-only");
   assert.equal(post.correctedEnglish, "I went home because I wasn't feeling well.");
-  assert.equal(post.naturalEnglish, post.correctedEnglish);
-  assert.equal(post.modelAnswer, post.correctedEnglish);
+  assert.equal(post.naturalEnglish, null);
+  assert.equal(post.modelAnswer, null);
+  assert.equal(post.stretchAnswer, null);
   assert.doesNotMatch(post.correctedEnglish, /Seoul|yesterday|2025/i);
   assert.match(post.score.band, /^(?:IM2|IH|AL)$/);
   assert.equal(typeof post.score.totalScore, "number");
@@ -941,6 +969,19 @@ test("deterministic Korean-English interference rules cover the core regression 
   assert.equal(applyLocalRules("I stayed at a pension."), "I stayed at a vacation rental.");
   assert.equal(applyLocalRules("I am difficult to wake up."), "I have a hard time waking up.");
   assert.equal(applyLocalRules("I recommend you to visit."), "I'd recommend visiting.");
+  for (const [verb, gerund] of [
+    ["forget", "forgetting"],
+    ["plan", "planning"],
+    ["begin", "beginning"],
+    ["stop", "stopping"],
+    ["put", "putting"],
+    ["shop", "shopping"],
+  ]) {
+    assert.equal(
+      applyLocalRules(`I am difficult to ${verb}.`),
+      `I have a hard time ${gerund}.`,
+    );
+  }
 });
 
 test("pension and after-a-long-time rules require the same context as the app rules", () => {

@@ -298,10 +298,19 @@ export function createCoachServer(options = {}) {
       try {
         const payload = await readJsonBody(request);
         if (clientAbortController.signal.aborted) return;
+        const modelHealth = await checkOllamaHealth({
+          fetchImpl,
+          timeoutMs: options.healthTimeoutMs,
+        });
+        const availableModels = [
+          ...(modelHealth.primaryAvailable ? [modelHealth.primaryModel] : []),
+          ...(modelHealth.fallbackAvailable ? [modelHealth.fallbackModel] : []),
+        ];
         const feedback = await createCoachFeedback(payload, {
           fetchImpl,
           timeoutMs: options.modelTimeoutMs,
           signal: clientAbortController.signal,
+          availableModels,
         });
         if (clientAbortController.signal.aborted || response.destroyed) return;
         sendJson(response, 200, { ok: true, ...feedback }, origin);

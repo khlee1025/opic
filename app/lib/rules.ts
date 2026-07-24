@@ -73,9 +73,15 @@ function lodgingContext(context: string, koreanPlan?: KoreanPlan): boolean {
 function gerund(verb: string): string {
   const lower = verb.toLowerCase();
   const doubled: Record<string, string> = {
+    admit: "admitting",
+    begin: "beginning",
+    forget: "forgetting",
     get: "getting",
     plan: "planning",
+    prefer: "preferring",
+    put: "putting",
     run: "running",
+    shop: "shopping",
     sit: "sitting",
     stop: "stopping",
     swim: "swimming",

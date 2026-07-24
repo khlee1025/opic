@@ -161,9 +161,9 @@ function buildFallbackFeedback(
     ...(stage === "post_rewrite"
       ? {
           correctedEnglish: corrected,
-          naturalEnglish: corrected,
-          modelAnswer: corrected,
-          stretchAnswer: corrected,
+          naturalEnglish: undefined,
+          modelAnswer: undefined,
+          stretchAnswer: undefined,
           phraseUpgrades: issues.map((issue) => ({
             from: issue.original,
             to: issue.suggestion,
@@ -671,7 +671,7 @@ function FeedbackSourceNotice({ feedback, onRetry }: { feedback: CoachFeedback; 
   return (
     <div className={`feedback-source ${isLocalModel ? "model" : "rules"}`} role="status">
       <div>
-        <strong>{isLocalModel ? "로컬 AI 심층 피드백" : "기본 규칙 교정 결과"}</strong>
+        <strong>{isLocalModel ? "로컬 AI 심층 피드백" : "로컬 AI 미가동 — 규칙 기반 결과"}</strong>
         <span>{isLocalModel
           ? `${feedback.modelUsed ? `${feedback.modelUsed} · ` : ""}이 PC 안에서 처리됨`
           : "로컬 AI가 아직 준비되지 않아 확실한 직역·문법 규칙만 적용했습니다."}</span>
