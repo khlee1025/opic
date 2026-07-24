@@ -1330,6 +1330,34 @@ test("warming health is explicit and coach requests do not queue behind model lo
   assert.equal(modelChatCalls, 0);
 });
 
+test("a failed warmup never reports an installed but unloaded model as ready", async (t) => {
+  const server = createCoachServer({
+    frontendUrl: "http://127.0.0.1:4272",
+    warmupState: { status: "failed" },
+    healthTimeoutMs: 20,
+    fetchImpl: async (url) => {
+      if (url === `${OLLAMA_BASE_URL}/api/tags`) {
+        return new Response(JSON.stringify({
+          models: [{ name: PRIMARY_MODEL }],
+        }), { status: 200 });
+      }
+      throw new Error("unexpected model request");
+    },
+  });
+  await new Promise((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, LOCAL_HOST, resolve);
+  });
+  t.after(() => new Promise((resolve) => server.close(resolve)));
+  const address = server.address();
+  const health = await (await fetch(
+    `http://${LOCAL_HOST}:${address.port}/api/health`,
+  )).json();
+
+  assert.equal(health.mode, "rules-only");
+  assert.equal(health.coachReady, true);
+});
+
 test("HTTP client disconnect aborts the in-flight local model request", async () => {
   let markModelStarted;
   let markModelAborted;

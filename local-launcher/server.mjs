@@ -283,9 +283,11 @@ export function createCoachServer(options = {}) {
       const modelAvailable = ollama.primaryAvailable || ollama.fallbackAvailable;
       const mode = warmupState.status === "warming"
         ? "warming"
-        : modelAvailable
-          ? "local-model"
-          : "rules-only";
+        : warmupState.status === "failed"
+          ? "rules-only"
+          : modelAvailable
+            ? "local-model"
+            : "rules-only";
       sendJson(response, 200, {
         ok: true,
         service: "opic-daily-coach",
@@ -449,7 +451,7 @@ export async function launchLocalModelEngine(options = {}) {
 
 export async function warmLocalModel(options = {}) {
   const fetchImpl = options.fetchImpl ?? globalThis.fetch;
-  const waitTimeoutMs = options.waitTimeoutMs ?? 20_000;
+  const waitTimeoutMs = options.waitTimeoutMs ?? 60_000;
   const requestTimeoutMs = options.requestTimeoutMs ?? 130_000;
   const deadline = Date.now() + waitTimeoutMs;
 
