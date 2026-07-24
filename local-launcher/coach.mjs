@@ -5,10 +5,10 @@ const MAX_PLAN_FIELD_CHARS = 1_000;
 const MAX_DRAFT_CHARS = 5_000;
 const MAX_AGGREGATE_INPUT_CHARS = 8_000;
 const MAX_INPUT_CONTEXT_UNITS = 9_000;
-export const ANALYSIS_TIMEOUT_MS = 45_000;
-export const FINAL_TIMEOUT_MS = 30_000;
+export const ANALYSIS_TIMEOUT_MS = 65_000;
+export const FINAL_TIMEOUT_MS = 35_000;
 export const RETRY_TIMEOUT_MS = 15_000;
-export const MAX_MODEL_TOTAL_TIMEOUT_MS = 90_000;
+export const MAX_MODEL_TOTAL_TIMEOUT_MS = 115_000;
 const DEFAULT_TIMEOUT_MS = MAX_MODEL_TOTAL_TIMEOUT_MS;
 
 export const OLLAMA_BASE_URL = "http://127.0.0.1:11435";
@@ -889,7 +889,7 @@ async function requestLocalModel(model, input, fetchImpl, timeoutMs, externalSig
       top_p: 0.85,
       repeat_penalty: 1.05,
       num_ctx: 4096,
-      num_predict: 800,
+      num_predict: 600,
     },
   }, fetchImpl, timeoutMs, externalSignal);
 }

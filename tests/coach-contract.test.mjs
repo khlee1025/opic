@@ -162,10 +162,10 @@ test("Ollama response schema omits unsupported grammar constraints", () => {
       assert.equal(keys.has(unsupported), false, `${unsupported} must be normalized in code instead`);
     }
   }
-  assert.equal(ANALYSIS_TIMEOUT_MS, 45_000);
-  assert.equal(FINAL_TIMEOUT_MS, 30_000);
+  assert.equal(ANALYSIS_TIMEOUT_MS, 65_000);
+  assert.equal(FINAL_TIMEOUT_MS, 35_000);
   assert.equal(RETRY_TIMEOUT_MS, 15_000);
-  assert.equal(MAX_MODEL_TOTAL_TIMEOUT_MS, 90_000);
+  assert.equal(MAX_MODEL_TOTAL_TIMEOUT_MS, 115_000);
   assert.equal(
     ANALYSIS_TIMEOUT_MS + FINAL_TIMEOUT_MS + RETRY_TIMEOUT_MS,
     MAX_MODEL_TOTAL_TIMEOUT_MS,
@@ -189,7 +189,7 @@ test("local model request is fixed to loopback, disables thinking/streaming, and
   assert.equal(calls[0].body.keep_alive, "30m");
   assert.equal(calls[0].body.format.properties.stage.enum[0], "feedback");
   assert.equal(calls[0].body.format.properties.correctedEnglish.type, "null");
-  assert.equal(calls[0].body.options.num_predict, 800);
+  assert.equal(calls[0].body.options.num_predict, 600);
   const systemPrompt = calls[0].body.messages[0].content;
   assert.ok(systemPrompt.length <= Math.floor(3_519 * 0.7));
   assert.match(systemPrompt, /issues.*empty array|issues:\s*\[\]/i);
@@ -224,7 +224,7 @@ test("post-rewrite uses analysis-only then closed-book answer generation", async
   const [analysisBody, finalBody] = calls;
   assert.equal(analysisBody.format.properties.correctedEnglish.type, "null");
   assert.equal(analysisBody.format.properties.stretchAnswer.type, "null");
-  assert.equal(analysisBody.options.num_predict, 800);
+  assert.equal(analysisBody.options.num_predict, 600);
   const analysisInput = JSON.parse(analysisBody.messages[1].content);
   assert.equal(analysisInput.englishDraft, null);
   assert.equal(analysisInput.rewriteDraft, request.rewriteDraft);
