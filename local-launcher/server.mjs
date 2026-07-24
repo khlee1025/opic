@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { createReadStream } from "node:fs";
 import { access, mkdir, stat } from "node:fs/promises";
 import http from "node:http";
@@ -19,6 +19,25 @@ export const DEFAULT_PORT = 4273;
 export const DEFAULT_FRONTEND_PORT = 4272;
 const MAX_BODY_BYTES = 64 * 1024;
 const PROJECT_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+
+export async function terminateProcessTree(child, options = {}) {
+  if (!child || child.exitCode !== null || !Number.isInteger(child.pid)) return;
+  const platform = options.platform ?? process.platform;
+  if (platform !== "win32") {
+    child.kill();
+    return;
+  }
+
+  const execFileImpl = options.execFileImpl ?? execFile;
+  await new Promise((resolve) => {
+    execFileImpl(
+      "taskkill.exe",
+      ["/PID", String(child.pid), "/T", "/F"],
+      { windowsHide: true },
+      () => resolve(),
+    );
+  });
+}
 
 function parsePort(value, fallback) {
   const port = Number.parseInt(String(value ?? ""), 10);
@@ -481,8 +500,10 @@ export async function startCoachServer(options = {}) {
   const address = server.address();
   const actualPort = typeof address === "object" && address ? address.port : port;
   const close = async () => {
-    frontendProcess?.kill();
-    ollamaProcess?.kill();
+    await Promise.all([
+      terminateProcessTree(frontendProcess),
+      terminateProcessTree(ollamaProcess),
+    ]);
     if (!server.listening) return;
     await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
   };

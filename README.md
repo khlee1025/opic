@@ -73,6 +73,12 @@ npm start
 
 브라우저가 자동으로 열리지 않으면 `http://127.0.0.1:4273`에 접속합니다. 소스 빌드가 없는 경우 먼저 `npm ci`와 `npm run build`를 실행해야 합니다.
 
+앱과 앱이 시작한 로컬 모델 프로세스를 함께 정상 종료하려면 다음을 실행합니다.
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\installer\stop.ps1
+```
+
 ## 버전 확인과 업데이트
 
 앱의 `설정·백업` 화면에서 앱 버전과 문항 버전을 확인할 수 있습니다. 실행 중에는 다음 명령으로도 확인할 수 있습니다.
